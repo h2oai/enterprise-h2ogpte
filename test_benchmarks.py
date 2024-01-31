@@ -9,17 +9,20 @@ from typing import Union
 import pytest
 
 from h2ogpte import H2OGPTE
+
 try:
     from mux_py.tests.conftest import e2e_data
     from parse.tests.datasets import CachedFile
-except ImportError:
+    from mux_py.tests.test_mux import API_KEY
+    from mux_py.tests.test_mux import REMOTE_ADDRESS
+except ModuleNotFoundError:
     from conftest import e2e_data
     from datasets import CachedFile
 
-REMOTE_ADDRESS = os.getenv("H2OGPTE_TEST_ADDRESS", "https://h2ogpte.genai.h2o.ai")
-API_KEY = os.getenv(
-    "H2OGPTE_API_KEY", "sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-)
+    REMOTE_ADDRESS = os.getenv("H2OGPTE_TEST_ADDRESS", "https://h2ogpte.genai.h2o.ai")
+    API_KEY = os.getenv("H2OGPTE_API_KEY")
+assert API_KEY, "Must set H2OGPTE_API_KEY env var first."
+
 client = H2OGPTE(address=REMOTE_ADDRESS, api_key=API_KEY)
 
 
