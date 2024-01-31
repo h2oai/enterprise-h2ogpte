@@ -21,6 +21,7 @@ make setup
 
 Third, run the benchmarks (token limits may apply, based on where h2oGPTe is running).
 You can edit the [test code](test_benchmarks.py) to limit the set of LLMs (GPT-4/Claude are expensive and disabled by default).
+And here are the input documents, questions and expected answers: [Q&A dataset](e2e_df.csv).
 ```
 make benchmark
 ```
