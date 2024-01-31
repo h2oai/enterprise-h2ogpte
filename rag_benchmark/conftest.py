@@ -4,7 +4,6 @@ import pandas as pd
 import pytest
 
 # Global variables to hold CSV data
-summarize_data: List[Tuple[str, str]] = []
 e2e_data: List[Tuple[str, str, str, str, bool]] = []
 
 
