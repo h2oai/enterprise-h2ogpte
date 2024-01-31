@@ -54,6 +54,9 @@ def get_llms_for_benchmark():
     if os.getenv("INGEST_ONLY"):
         return ["no-op"]
     all_llms = [x["base_model"] for x in client.get_llms()]
+    if os.getenv("DROP_EXPENSIVE"):
+        all_llms = [x for x in all_llms if "claude" not in x]
+        all_llms = [x for x in all_llms if "gpt-4" not in x]
     return all_llms
 
 
