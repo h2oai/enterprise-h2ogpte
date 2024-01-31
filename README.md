@@ -12,12 +12,13 @@ export H2OGPTE_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX   # y
 
 Set up Python environment (Python 3.8+ recommended)
 ```
+cd rag_benchmark
 make setup
 ```
 
 Now, you can run the benchmarks (up to token limits of USD 10 per day).
-You can edit the [test code](test_benchmarks.py) to limit the set of LLMs (GPT-4/Claude are expensive and disabled by default).
+You can edit the [test code](rag_benchmark/test_benchmarks.py) to limit the set of LLMs (GPT-4/Claude are expensive and disabled by default).
 ```
 make benchmark
 ```
-then look at [the Benchmark results](benchmarks/test_client_e2e.md).
+then look at [the Benchmark results](rag_benchmark/results/test_client_e2e.md).

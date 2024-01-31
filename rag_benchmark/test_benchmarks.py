@@ -280,7 +280,7 @@ def test_pass_rate_e2e():
             0,
             22,  # whisper OOM xfail (11 models x 2 tests)
         ], "make sure to run `make test_client_e2e` with TEST_ALL=1"
-    with open("benchmarks/test_client_e2e.md", "wt") as f:
+    with open("results/test_client_e2e.md", "wt") as f:
         try:
             import h2ogpte_core.settings as core_settings
             import h2ogpte_parse.settings as parse_settings
