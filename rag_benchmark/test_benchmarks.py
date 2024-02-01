@@ -9,18 +9,20 @@ from typing import Union
 import pytest
 
 from h2ogpte import H2OGPTE
+from conftest import e2e_data
 
+assert e2e_data, "Must have Q&A RAG dataset."
 try:
-    from mux_py.tests.conftest import e2e_data
+    # # For h2ogpte CI
+    from mux_py.tests.test_mux import REMOTE_ADDRESS, API_KEY
     from parse.tests.datasets import CachedFile
-    from mux_py.tests.test_mux import API_KEY
-    from mux_py.tests.test_mux import REMOTE_ADDRESS
-except ModuleNotFoundError:
-    from conftest import e2e_data
+except ModuleNotFoundError as e:
+    # For open-source benchmarks repository
     from datasets import CachedFile
 
     REMOTE_ADDRESS = os.getenv("H2OGPTE_TEST_ADDRESS", "https://h2ogpte.genai.h2o.ai")
     API_KEY = os.getenv("H2OGPTE_API_KEY")
+assert REMOTE_ADDRESS, "Must have h2oGPTe remote server address."
 assert API_KEY, "Must set H2OGPTE_API_KEY env var first."
 
 client = H2OGPTE(address=REMOTE_ADDRESS, api_key=API_KEY)
