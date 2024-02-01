@@ -60,7 +60,9 @@ def get_llms_for_benchmark():
     if os.getenv("DROP_EXPENSIVE"):
         all_llms = [x for x in all_llms if "claude" not in x]
         all_llms = [x for x in all_llms if "gpt-4" not in x]
-    return all_llms
+    if os.getenv("TEST_ALL"):
+        return all_llms
+    return ["mistralai/Mixtral-8x7B-Instruct-v0.1"]  # for CI, test==ship
 
 
 @pytest.mark.e2e
