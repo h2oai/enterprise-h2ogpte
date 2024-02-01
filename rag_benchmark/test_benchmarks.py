@@ -33,13 +33,11 @@ class QuestionExpecteds(str):
             (
                 "Did inflation affect gross profit?", <= question
                 [
-                    ["Yes, inflation affected gross profit.", "raw material"], <= AND (must match all)
+                    ["Yes, inflation affected gross profit.", "raw material"], # <= must match all
                                         # OR
-                    ["inflation did affect gross profit", "raw material"],
+                    ["inflation did affect gross profit", "raw material"], # <= must match all
                                         # OR
-                    ["inflation had an impact", "raw material"],
-                                        # OR
-                    ["Yes", "affect"],  <= OR has all these words
+                    ["inflation had an impact", "raw material"], # <= must match all
                 ],
             ),
         ]
