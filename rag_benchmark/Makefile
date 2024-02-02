@@ -5,7 +5,7 @@ PYTEST_BASE=$(PYTEST_BIN) $(PYTEST_ARGS)
 setup:
 	rm -rf venv
 	python3 -m venv venv
-	./venv/bin/python -m pip install h2ogpte==1.3.4
+	./venv/bin/python -m pip install h2ogpte==1.3.8
 	./venv/bin/python -m pip install -r requirements-pytest.txt
 	. ./venv/bin/activate
 
