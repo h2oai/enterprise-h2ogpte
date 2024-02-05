@@ -12,7 +12,7 @@ WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-202
 WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was long-term debt at the end of 2022?,"[['$174,870', 'million'], ['$174.870', 'billion'], ['$174.87', 'billion'], ['$174.9', 'billion']]",True
 WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was diluted EPS for 2021?,[['$4.95']],True
 WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was diluted EPS for 2022?,[['$3.14']],True
-WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was total noninterest income for commercial banking?,"[['$3,631', 'million']]",True
+WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was total noninterest income for commercial banking?,"[['$3,631', 'million']]",False
 WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was total noninterest income for corporate and investment banking?,"[['$6,509', 'million']]",False
 WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What were total nonperforming assets?,"[['$5,763', 'million'], ['$5.8', 'billion'], ['$5.763', 'billion']]",True
 CitiAnnual,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/citi-2022-annual-report.pdf,What was net income?,"[['$14,845', 'million'], ['$14.8', 'billion']]",False
@@ -42,7 +42,7 @@ CBA-Spreads,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2023-Annual-R
 NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,How much total assets under management?,"[['$710', 'billion']]",False
 NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,How many issuers are in the corporate bond portfolio?,"[['3,300'], ['3300']]",True
 NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,What was NYLIC's statutory surplus in 2021?,"[['$24.57', 'billion']]",True
-NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,What was total surplus (incl. asset valuation reserve)?,[['$30.1 billion']],True
+NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,What was total surplus (incl. asset valuation reserve)?,[['$30.1 billion']],False
 NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,What percentage is in RMBS?,"[['6%'], ['6 percent']]",False
 NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,How large was the dividend payout in 2023?,"[['$2', 'billion'], ['$2.0', 'billion']]",True
 NYL_All,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/2022-nyl-investment-report.pdf,How large was the general account investment portfolio?,"[['$317.13', 'billion'], ['$317', 'billion'], ['$317.1', 'billion']]",True
