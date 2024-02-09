@@ -222,9 +222,9 @@ def test_pass_rate_e2e():
             msg = failure.contents[0]
             try:
                 msg = msg.split("RuntimeError")[2]
+                msg = msg[msg.find("Errors: ") + 8 : msg.rfind(", references:")]
             except:
-                msg = msg.split("SessionError")[1]
-            msg = msg[msg.find("Errors: ") + 8 : msg.rfind(", references:")]
+                msg = msg[msg.find("raise SessionError") + 19 :]
             msg = f"[{dataset}]({url}) " + msg
             q = msg.split("question: ")[-1]
             if q not in fail_questions:
