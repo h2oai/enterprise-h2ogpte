@@ -62,7 +62,11 @@ def get_llms_for_benchmark():
         all_llms = [x for x in all_llms if "gpt-4" not in x]
     if os.getenv("TEST_ALL"):
         return all_llms
-    return ["mistralai/Mixtral-8x7B-Instruct-v0.1"]  # for CI, test==ship
+    return [
+        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        # "claude-2.1",
+        # "gpt-4-1106-preview",
+    ]  # for CI, test==ship
 
 
 @pytest.mark.e2e
@@ -100,7 +104,7 @@ def test_pdf_questions_e2e(
         if c.name == collection_name:
             collection_id = c.id
             while not client.get_collection(collection_id).document_count:
-                time.sleep(0.1)
+                time.sleep(1)
                 continue
             chat_session_id = client.create_chat_session(collection_id)
             break
