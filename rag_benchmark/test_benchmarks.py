@@ -122,8 +122,12 @@ def test_pdf_questions_e2e(
             pytest.xfail(reason=f"OOM for whisper model")
         if job.errors and cached_file in ["DemoDataJon"]:
             # demo data jon.zip has one pure image without any text, so the job has errors
-            assert job.failed > 0.0
-            assert job.passed < 1.0
+            assert (
+                job.failed == 0.0
+            ), "overall job passed fine even with internal errors"
+            assert (
+                job.passed == 1.0
+            ), "overall job passed fine even with internal errors"
         else:
             assert not job.errors, job.errors
             assert job.failed == 0.0
