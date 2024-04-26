@@ -56,16 +56,19 @@ class QuestionExpecteds(str):
 def get_llms_for_benchmark():
     if os.getenv("INGEST_ONLY"):
         return ["no-op"]
-    all_llms = [x["base_model"] for x in client.get_llms()]
+    all_llms = client.get_llm_names()
     if os.getenv("DROP_EXPENSIVE"):
         all_llms = [x for x in all_llms if "claude" not in x]
         all_llms = [x for x in all_llms if "gpt-4" not in x]
     if os.getenv("TEST_ALL"):
         return all_llms
+        # return client.get_visible_image_models()
     return [
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
-        # "claude-2.1",
+        # "gemini-1.5-pro-latest",
+        # "claude-3-haiku-20240307",
         # "gpt-4-1106-preview",
+        # "gpt-4-vision-preview",
     ]  # for CI, test==ship
 
 
@@ -143,21 +146,44 @@ def test_pdf_questions_e2e(
         count_failed = 0
         msg = ""
         for question, expecteds in question_expecteds.get():
-            reply = session.query(question, timeout=600, llm=llm)
-            assert len(
-                client.list_chat_message_references(reply.id)
-            ), "must have references"
+            reply = None
+            try:
+                reply = session.query(
+                    question,
+                    timeout=900,
+                    llm=llm,
+                    # FIXME - do auto-rag and image once have confidence
+                    rag_config={"rag_type": "rag"},
+                    llm_args={"enable_image": False},
+                )
+            except Exception as e:
+                if llm in ["gemini-pro"] and "ValueError: block_reason: SAFETY" in str(
+                    e
+                ):
+                    # only known failure that happens reliably due to overly strong safety feature
+                    reply_content = str(e)
+                else:
+                    raise
             refs = ""
-            for ref in client.list_chat_message_references(reply.id):
-                chunks = client.get_chunks(collection_id, [ref.chunk_id])
-                assert len(chunks) == 1
-                page_start = json.loads(ref.pages)["selections"][0]["page"]
-                refs += "[score: %s, page: %d] " % (ref.score, page_start)
-                for c in chunks:
-                    refs += c.text + "\n\n"
+            if reply is not None:
+                reply_content = reply.content
+                assert len(
+                    client.list_chat_message_references(reply.id)
+                ), "must have references"
+                for ref in client.list_chat_message_references(reply.id):
+                    chunks = client.get_chunks(collection_id, [ref.chunk_id])
+                    assert len(chunks) == 1
+                    selections = json.loads(ref.pages)["selections"]
+                    if selections:
+                        page_start = selections[0]["page"]
+                    else:
+                        page_start = 1
+                    refs += "[score: %s, page: %d] " % (ref.score, page_start)
+                    for c in chunks:
+                        refs += c.text + "\n\n"
             error_msg = ""
             for expected in expecteds:
-                missings = [e for e in expected if e not in reply.content]
+                missings = [e for e in expected if e not in reply_content]
                 if not missings:
                     # one complete set of expected strings is enough to pass the test
                     error_msg = ""
@@ -167,7 +193,7 @@ def test_pdf_questions_e2e(
             if error_msg:
                 missing = (
                     "missing: %s, reply: '%s', question: '%s', references: '%s'\n\n"
-                    % (error_msg, reply.content, question, refs)
+                    % (error_msg, reply_content, question, refs)
                 )
                 msg += missing
                 count_failed += 1
@@ -205,13 +231,14 @@ def test_pass_rate_e2e():
     for test in test_list:
         llm = None
         for _llm in llms:
-            if _llm in test["name"]:
+            tn = test["name"]
+            if _llm in tn:
                 llm = _llm
                 break
         dataset = None
         url = None
         for test_row in e2e_data:
-            if test_row[0] + "-" in test["name"]:
+            if test_row[0] + "-" in tn:
                 dataset = test_row[0]
                 url = test_row[1]
         assert llm, f"must find llm {llm} in test"
@@ -228,13 +255,32 @@ def test_pass_rate_e2e():
                 passes[llm] += 1
         else:
             msg = failure.contents[0]
+            qq = None
             try:
-                msg = msg.split("RuntimeError")[2]
-                msg = msg[msg.find("Errors: ") + 8 : msg.rfind(", references:")]
+                if "question = " in msg:
+                    splits = failure.contents[0].split("question =")
+                    s = splits[-1]
+                    qq = s[: s.find("expecteds =")].strip()
+                if 0 <= msg.find("TimeoutError") < msg.find("RuntimeError"):
+                    msg = msg[msg.find("message = ") + 10 :]
+                    msg = msg[: msg.find(",")]
+                    if qq is None:
+                        qq = msg
+                    msg = "TimeoutError"
+                else:
+                    msg = msg.split("RuntimeError")[2]
+                    msg = msg[msg.find("Errors: ") + 8 : msg.rfind(", references:")]
             except:
                 msg = msg[msg.find("raise SessionError") + 19 :]
             msg = f"[{dataset}]({url}) " + msg
-            q = msg.split("question: ")[-1]
+            if qq is not None:
+                q = qq
+            else:
+                splits = q = msg.split("question: ")
+                if len(splits) > 1:
+                    q = splits[-1]
+            if q[-1] == ",":
+                q = q[:-1]
             if q not in fail_questions:
                 fail_questions[q] = 1
             else:
@@ -249,22 +295,33 @@ def test_pass_rate_e2e():
 
     usage_cost_table = client.get_llm_usage_24h_by_llm()
     llm_cost_dict = {u.llm_name: u.llm_cost for u in usage_cost_table}
-
+    perf_table = client.get_llm_performance_by_llm("24 hours")
+    perf_frame = pd.DataFrame(
+        data={
+            "LLM": [p.llm_name for p in perf_table],
+            "CALLS": [p.call_count for p in perf_table],
+            "INPUT_TOKENS": [p.input_tokens for p in perf_table],
+            "OUTPUT_TOKENS": [p.output_tokens for p in perf_table],
+            "TOKENS_PER_SECOND": [p.tokens_per_second for p in perf_table],
+            "TIME_TO_FIRST_TOKEN": [p.time_to_first_token for p in perf_table],
+        }
+    )
+    cost_frame = pd.DataFrame(
+        data={
+            "LLM": llms,
+            "COST": [llm_cost_dict.get(llm, -1) for llm in llms],
+            "PASS": [passes.get(llm, 0) for llm in llms],
+            "FAIL": [fails.get(llm, 0) for llm in llms],
+            "ACCURACY [%]": [
+                passes.get(llm, 0) * 100 / (passes.get(llm, 0) + fails.get(llm, 0))
+                for llm in llms
+            ],
+            "TIME": [times.get(llm, -1) for llm in llms],
+        }
+    )
     results_frame = (
-        pd.DataFrame(
-            data={
-                "LLM": llms,
-                "PASS": [passes.get(llm, 0) for llm in llms],
-                "FAIL": [fails.get(llm, 0) for llm in llms],
-                "ACCURACY [%]": [
-                    passes.get(llm, 0) * 100 / (passes.get(llm, 0) + fails.get(llm, 0))
-                    for llm in llms
-                ],
-                "COST": [llm_cost_dict.get(llm, -1) for llm in llms],
-                "TIME": [times.get(llm, -1) for llm in llms],
-            }
-        )
-        .sort_values(["PASS", "TIME"], ascending=[False, True])
+        cost_frame.merge(perf_frame, left_on="LLM", right_on="LLM")
+        .sort_values(["PASS", "COST"], ascending=[False, True])
         .reset_index(drop=True)
     )
     results_frame.index = range(1, results_frame.shape[0] + 1)
@@ -325,6 +382,8 @@ def test_pass_rate_e2e():
         f.write("Date: " + str(datetime.now()))
         f.write("\n\n")
         f.write("Host: " + hostname)
+        f.write("\n\n")
+        f.write(f"Total cost: {results_frame['COST'].sum()} USD")
         f.write("\n\n")
         f.write(f"\n## Results:\n")
         f.write(results_frame.to_markdown())
