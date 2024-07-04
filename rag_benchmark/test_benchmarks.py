@@ -61,8 +61,9 @@ def get_llms_for_benchmark():
         all_llms = [x for x in all_llms if "claude" not in x]
         all_llms = [x for x in all_llms if "gpt-4" not in x]
     if os.getenv("TEST_ALL"):
+        all_llms = [x for x in all_llms if "mixtral-8x7b-32768" not in x]
         return all_llms
-        # return client.get_visible_image_models()
+        # return client.get_vision_capable_llm_names()
     return [
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
         # "gemini-1.5-pro-latest",
@@ -152,9 +153,7 @@ def test_pdf_questions_e2e(
                     question,
                     timeout=900,
                     llm=llm,
-                    # FIXME - do auto-rag and image once have confidence
-                    rag_config={"rag_type": "rag"},
-                    llm_args={"enable_image": False},
+                    rag_config={"rag_type": "rag"},  # FIXME - test "auto"
                 )
             except Exception as e:
                 if llm in ["gemini-pro"] and "ValueError: block_reason: SAFETY" in str(
@@ -230,11 +229,14 @@ def test_pass_rate_e2e():
     fail_questions = {}
     for test in test_list:
         llm = None
+        tn = None
         for _llm in llms:
-            tn = test["name"]
-            if _llm in tn:
+            tn = test.get("name")
+            if tn and _llm in tn:
                 llm = _llm
                 break
+        if not tn:
+            continue
         dataset = None
         url = None
         for test_row in e2e_data:
