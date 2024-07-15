@@ -3,7 +3,7 @@ Femsa,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/Coca-Cola-FEMSA-Res
 Femsa,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/Coca-Cola-FEMSA-Results-1Q23-vf-2.pdf,What was the revenue of Mexico?,"[['27,229', 'million']]",False
 Femsa,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/Coca-Cola-FEMSA-Results-1Q23-vf-2.pdf,How did gross profit change YoY for South America?,"[['11.0%'], ['11%']]",False
 Femsa,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/Coca-Cola-FEMSA-Results-1Q23-vf-2.pdf,When was the cybersecurity incident announced?,[['April 26']],True
-Femsa,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/Coca-Cola-FEMSA-Results-1Q23-vf-2.pdf,Did inflation affect gross profit?,"[['inflation affected gross profit.'], ['inflation did affect'], ['inflation had a'], ['was affected']]",True
+Femsa,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/Coca-Cola-FEMSA-Results-1Q23-vf-2.pdf,Did inflation affect gross profit?,"[['inflation affected gross profit.'], ['inflation appears to have affected'], ['inflation impacted'], ['inflation did affect'], ['inflation had a'], ['was affected']]",True
 Femsa,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/Coca-Cola-FEMSA-Results-1Q23-vf-2.pdf,What country had the largest revenue and how much was it?,"[['Mexico', '27,229', 'million']]",False
 WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was goodwill balance?,"[['$25.2', 'billion'], ['$25.173', 'billion'], ['$25,173', 'million']]",True
 WellsFargo,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/wellsfargo-2022-annual-report.pdf,What was the available borrowing capacity?,"[['$209.0', 'billion'], ['$209', 'billion']]",True
@@ -65,7 +65,7 @@ DAIInstall,https://s3.amazonaws.com/artifacts.h2o.ai/releases/ai/h2o/dai/rel-1.1
 FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,What are the top 3 fast-food restaurants across all age cohorts?,"[[""MCDONALD'S"", 'CHICK-FIL-A', 'TACO BELL'], [""McDonald's"", 'Chick-fil-A', 'Taco Bell']]",False
 FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,What is the total number of Wendy's customers?,"[['4,527,294'], ['4527294']]",False
 FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,How many baby boomer customers for Subway are there?,"[['528,785'], ['528785']]",False
-FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,Between which years is a Gen Xer?,"[['1965-1981'], ['1965 to 1981'], ['1965 and 1981']]",True
+FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,Between which years is a Gen Xer?,"[['1965-1981'], ['1965 to 1981'], ['1965 and 1981']]",False
 FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,Total customers Gen X?,"[['13,192,015'], ['13192015']]",False
 FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,Number of Silent Gen customers for Chipotle?,"[['16,263'], ['16263']]",False
 FastFood,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/fastfood.jpg,Total number of customers for Gen X and Gen Z combined?,"[['24,038,048'], ['24038048']]",False
@@ -144,8 +144,8 @@ imagejong,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/hbo.png,Aidan G
 imagejonh,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/displays.png,What was the pack spinner capacity?,"[['118']]",False
 imagejoni,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/desktop.png,"is the 2nd email starred, yes or no?","[['no'], ['No']]",False
 imagejonj,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/googlemaps.png,is La Taqueria north of the 24th St Mission Bart station?,"[['no']]",False
-imagejonk,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/baby_cake.png,Extract the text in the image,"[['Congratulations Kate and Luke on your upcoming arrival'],['congratulations kate and luke on your upcoming arrival']]",False
-imagejonk,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/baby_cake.png,Extract the text shown.,"[['Congratulations Kate and Luke on your upcoming arrival'],['congratulations kate and luke on your upcoming arrival']]",False
+imagejonk,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/baby_cake.png,Extract the text in the image,"[['Congratulations Kate & Luke on your upcoming arrival'],['Congratulations Kate and Luke on your upcoming arrival']]",False
+imagejonk,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/baby_cake.png,Extract the text shown.,"[['Congratulations Kate & Luke on your upcoming arrival'],['Congratulations Kate and Luke on your upcoming arrival']]",False
 imagejonl,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/chart.png,What is the highest life expectancy at birth of males?,"[['80.7']]",False
 imagejonm,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/food_poisoning.png,"According to the table below, which food is the most likely cause of the outbreak of food poisoning: A. Cold chicken B. Potato salad C. Egg sandwiches D. Fruit pie and cream","[['B'],['Potato salad']]",False
 imagejonn,https://enterprise-h2ogpt-public-data.s3.amazonaws.com/janet.png,"Janet Ludlow’s firm requires all its analysts to use a two-stage dividend discount model (DDM) and the capital asset pricing model (CAPM) to value stocks. Using the CAPM and DDM, Ludlow has valued QuickBrush Company at $63 per share. She now must value SmileWhite Corporation. Calculate the required rate of return for SmileWhite by using the information in the following table. A. 14% B. 15% C. 16%","[['C'],['16%']]",False

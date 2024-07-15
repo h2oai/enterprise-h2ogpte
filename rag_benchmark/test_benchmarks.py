@@ -1,15 +1,20 @@
 import ast
+import io
 import json
 import os
+import shutil
 import subprocess
 import time
+from collections import Counter
 from datetime import datetime
 from typing import Union
 
+import filelock
+import datatable as dt
 import pytest
 
 from h2ogpte import H2OGPTE
-from conftest import e2e_data
+from conftest import e2e_data, ai100_data
 
 assert e2e_data, "Must have Q&A RAG dataset."
 try:
@@ -217,7 +222,7 @@ def test_pass_rate_e2e():
     hostname = ts["hostname"]
     test_list = ts.contents
     print(test_list)
-    llms = get_llms_for_benchmark()
+    llms = client.get_llm_names()
     llms = sorted(
         llms, key=lambda x: len(x), reverse=True
     )  # sort by length, longest one first, to avoid partial matches below
@@ -243,7 +248,6 @@ def test_pass_rate_e2e():
             if test_row[0] + "-" in tn:
                 dataset = test_row[0]
                 url = test_row[1]
-        assert llm, f"must find llm {llm} in test"
         assert dataset, "must find dataset in test"
         if llm not in times:
             times[llm] = 0
@@ -298,6 +302,7 @@ def test_pass_rate_e2e():
     usage_cost_table = client.get_llm_usage_24h_by_llm()
     llm_cost_dict = {u.llm_name: u.llm_cost for u in usage_cost_table}
     perf_table = client.get_llm_performance_by_llm("24 hours")
+    llm_vision_map = client.get_llm_and_auto_vision_llm_names()
     perf_frame = pd.DataFrame(
         data={
             "LLM": [p.llm_name for p in perf_table],
@@ -311,11 +316,14 @@ def test_pass_rate_e2e():
     cost_frame = pd.DataFrame(
         data={
             "LLM": llms,
+            "LLM[VISION]": [llm_vision_map.get(llm) for llm in llms],
             "COST": [llm_cost_dict.get(llm, -1) for llm in llms],
             "PASS": [passes.get(llm, 0) for llm in llms],
             "FAIL": [fails.get(llm, 0) for llm in llms],
             "ACCURACY [%]": [
-                passes.get(llm, 0) * 100 / (passes.get(llm, 0) + fails.get(llm, 0))
+                passes.get(llm, 0)
+                * 100
+                / max(1, (passes.get(llm, 0) + fails.get(llm, 0)))
                 for llm in llms
             ],
             "TIME": [times.get(llm, -1) for llm in llms],
@@ -402,6 +410,19 @@ def test_pass_rate_e2e():
                 for ff in sorted(fail_msgs[llm], key=lambda x: x.lower()):
                     f.write(f"   - {ff}\n")
                 f.write("\n")
+        f.write(f"\n## Accuracy Stats:\n")
+        f.write(
+            json.dumps(
+                dict(
+                    zip(
+                        results_frame["LLM"].to_list(),
+                        results_frame["ACCURACY [%]"].to_list(),
+                    )
+                ),
+                indent=2,
+            )
+        )
+        f.write("\n")
         f.write(f"\n## Settings:\n")
         f.write(dicts)
         f.write("\n")
