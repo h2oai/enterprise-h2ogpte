@@ -158,7 +158,7 @@ def test_pdf_questions_e2e(
                     question,
                     timeout=900,
                     llm=llm,
-                    rag_config={"rag_type": "rag"},  # FIXME - test "auto"
+                    rag_config=dict(rag_type="rag"),
                 )
             except Exception as e:
                 if llm in ["gemini-pro"] and "ValueError: block_reason: SAFETY" in str(
@@ -417,6 +417,32 @@ def test_pass_rate_e2e():
                     zip(
                         results_frame["LLM"].to_list(),
                         results_frame["ACCURACY [%]"].to_list(),
+                    )
+                ),
+                indent=2,
+            )
+        )
+        f.write("\n")
+        f.write(f"\n## Speed Stats:\n")
+        f.write(
+            json.dumps(
+                dict(
+                    zip(
+                        results_frame["LLM"].to_list(),
+                        results_frame["TOKENS_PER_SECOND"].to_list(),
+                    )
+                ),
+                indent=2,
+            )
+        )
+        f.write("\n")
+        f.write(f"\n## Latency Stats:\n")
+        f.write(
+            json.dumps(
+                dict(
+                    zip(
+                        results_frame["LLM"].to_list(),
+                        results_frame["TIME_TO_FIRST_TOKEN"].to_list(),
                     )
                 ),
                 indent=2,
