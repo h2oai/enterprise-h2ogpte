@@ -1,20 +1,15 @@
 import ast
-import io
 import json
 import os
-import shutil
 import subprocess
 import time
-from collections import Counter
 from datetime import datetime
 from typing import Union
 
-import filelock
-import datatable as dt
 import pytest
 
 from h2ogpte import H2OGPTE
-from conftest import e2e_data, ai100_data
+from conftest import e2e_data
 
 assert e2e_data, "Must have Q&A RAG dataset."
 try:
@@ -68,7 +63,6 @@ def get_llms_for_benchmark():
     if os.getenv("TEST_ALL"):
         all_llms = [x for x in all_llms if "mixtral-8x7b-32768" not in x]
         return all_llms
-        # return client.get_vision_capable_llm_names()
     return [
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
         # "gemini-1.5-pro-latest",
@@ -158,7 +152,7 @@ def test_pdf_questions_e2e(
                     question,
                     timeout=900,
                     llm=llm,
-                    rag_config=dict(rag_type="rag"),
+                    rag_config=dict(rag_type="auto"),
                 )
             except Exception as e:
                 if llm in ["gemini-pro"] and "ValueError: block_reason: SAFETY" in str(
@@ -417,32 +411,6 @@ def test_pass_rate_e2e():
                     zip(
                         results_frame["LLM"].to_list(),
                         results_frame["ACCURACY [%]"].to_list(),
-                    )
-                ),
-                indent=2,
-            )
-        )
-        f.write("\n")
-        f.write(f"\n## Speed Stats:\n")
-        f.write(
-            json.dumps(
-                dict(
-                    zip(
-                        results_frame["LLM"].to_list(),
-                        results_frame["TOKENS_PER_SECOND"].to_list(),
-                    )
-                ),
-                indent=2,
-            )
-        )
-        f.write("\n")
-        f.write(f"\n## Latency Stats:\n")
-        f.write(
-            json.dumps(
-                dict(
-                    zip(
-                        results_frame["LLM"].to_list(),
-                        results_frame["TIME_TO_FIRST_TOKEN"].to_list(),
                     )
                 ),
                 indent=2,
