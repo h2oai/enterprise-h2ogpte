@@ -61,7 +61,9 @@ def get_llms_for_benchmark():
         all_llms = [x for x in all_llms if "claude" not in x]
         all_llms = [x for x in all_llms if "gpt-4" not in x]
     if os.getenv("TEST_ALL"):
-        all_llms = [x for x in all_llms if "mixtral-8x7b-32768" not in x]
+        all_llms = [
+            x for x in all_llms if "mixtral-8x7b-32768" not in x and "Guard" not in x
+        ]
         return all_llms
     return [
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
