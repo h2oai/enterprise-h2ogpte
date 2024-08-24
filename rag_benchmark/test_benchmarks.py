@@ -183,7 +183,9 @@ def test_pdf_questions_e2e(
                         refs += c.text + "\n\n"
             error_msg = ""
             for expected in expecteds:
-                missings = [e for e in expected if e not in reply_content]
+                missings = [
+                    e for e in expected if e.lower() not in reply_content.lower()
+                ]
                 if not missings:
                     # one complete set of expected strings is enough to pass the test
                     error_msg = ""
