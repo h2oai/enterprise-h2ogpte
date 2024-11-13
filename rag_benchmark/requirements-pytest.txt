@@ -10,12 +10,12 @@ minio==7.1.16
 msgpack==1.0.6
 numpy==1.26.2
 pandas==2.2.2
-pydantic[dotenv]==2.5.2
-pydantic-settings==2.0.3
+pydantic[dotenv]==2.8.2
+pydantic-settings==2.3.4
 requests==2.32.0
 tabulate==0.9.0
 websockets==11.0.3
-nltk==3.8.1
+nltk==3.9.1
 jsonschema==4.21.1
 genson==1.2.2
 jsondiff==2.0.0
