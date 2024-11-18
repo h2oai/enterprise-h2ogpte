@@ -17,6 +17,7 @@ from agents_test_utils import (
     get_agent_files,
     get_agents_chat_history_md,
     get_agents_analysis,
+    most_common_or_default,
 )
 import pytest
 import html
@@ -176,6 +177,7 @@ def get_gaia_tool_categories() -> list[str]:
 
 def get_gaia_levels() -> list[str]:
     levels = [
+        "0",
         "1",
         "2",
         "3",
@@ -387,11 +389,12 @@ def test_pdf_questions_e2e(
                 audio_input_language = random.choice(
                     list(_get_supported_audio_input_languages().keys())
                 )
-                keep_tables_as_one_chunk = random.choice([False])
+                keep_tables_as_one_chunk = random.choice([False, True])
                 tesseract_lang = random.choice(supported_tesseract_languages)
                 gen_doc_summaries = random.choice([False, True])
                 gen_doc_questions = random.choice([False, True])
                 handwriting_check = random.choice([False, True])
+                topic_model = random.choice([True])
                 print("doing random attack")
             except:
                 print("not doing random attack")
@@ -402,6 +405,7 @@ def test_pdf_questions_e2e(
                 gen_doc_summaries = False
                 gen_doc_questions = False
                 handwriting_check = False
+                topic_model = False
 
             with open(file_path, "rb") as f:
                 upload_id = client.upload(file_path.name, f)
@@ -438,6 +442,9 @@ def test_pdf_questions_e2e(
             except AssertionError as assertionException:
                 client.delete_collections([collection_id])
                 raise assertionException
+
+            if topic_model:
+                client.create_topic_model(collection_id)
 
     if os.getenv("INGEST_ONLY"):
         return
@@ -767,9 +774,41 @@ def test_pass_rate_e2e():
     test_list = test_suite.find_all("testcase")
     print(test_list)
 
-    llms = client.get_llm_names()
     if os.getenv("RUN_GAIA"):
-        llms = get_llms_for_benchmark()
+        # cd ~/Downloads/all_main_gaia
+        # Run bash ~/h2ogpte/scripts/gaia_artifacts_download.sh
+        # Run bash ~/h2ogpte/scripts/gaia_artifacts_download_1.sh 11861110789 (for new gaia run) for specific new runs if just few new runs needed to avoid redoing entire download)
+        # Run test_merge_many_runs
+        # then set do_merged = True
+        # Then run this test
+        do_merged = True
+        if do_merged:
+            llm_sonnet = "11877726721"
+            llms = [
+                "11568839878",
+                "11588463470",
+                "11607498444",
+                "11625669152",
+                "11640765003",
+                "11649329718",
+                "11659472213",
+                "11679119205",
+                "11698710518",
+                "11737590601",
+                "11754230597",
+                "11763065795",
+                "11784555244",
+                "11861110789",
+                "11867920275",
+                "11869277441",
+                "11877726721",
+            ]
+        else:
+            llms = get_llms_for_benchmark()
+            llm_sonnet = "claude-3-5-sonnet-20240620"
+    else:
+        llms = client.get_llm_names()
+
     llms = sorted(
         llms, key=lambda x: len(x), reverse=True
     )  # sort by length, longest one first, to avoid partial matches below
@@ -927,46 +966,110 @@ def test_pass_rate_e2e():
 
         # MODE_LLM
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.copy().items():
+            print(f"\nname:{name}", file=sys.stdout)
+            orig_response = metadata_str_dict_by_name[(name, llm)]["metadata_dict"][
+                "response"
+            ]
+            if "# filename" in orig_response:
+                orig_response = ""
+            bad_str = "\n![image]"
+            if isinstance(orig_response, str) and bad_str in orig_response:
+                index_bad = orig_response.index(bad_str)
+                print("cleaned %s" % orig_response)
+                orig_response = orig_response[:index_bad]
+            if orig_response == "infinity":
+                orig_response = ""
+
             if (name, "MODE_LLM") not in metadata_str_dict_by_name:
                 metadata_str_dict_by_name[(name, "MODE_LLM")] = copy.deepcopy(
                     metadata_str_dict1
                 )
                 metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
+                    "orig_response"
+                ] = orig_response
+                metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
                     "response"
                 ] = list()
             if llm != "PASS_ANY":
-                response = metadata_str_dict_by_name[(name, llm)]["metadata_dict"][
-                    "response"
-                ]
-                response = normalize_answer(response)
-                if isinstance(response, list):
-                    response = tuple(response)
-                metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
-                    "response"
-                ].append(response)
+                response = orig_response
+                if len(response) > 100:
+                    print(f"BADNAME {name}")
+                print(
+                    f"\nresponse: {response}\nnormalized_response: {normalize_answer(response)}",
+                    file=sys.stdout,
+                )
+                if response:
+                    response = normalize_answer(response)
+                    if isinstance(response, list):
+                        response = tuple(response)
+                    metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
+                        "response"
+                    ].append(response)
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.copy().items():
             if llm == "MODE_LLM":
                 response = metadata_str_dict_by_name[(name, "MODE_LLM")][
                     "metadata_dict"
                 ]["response"]
-                response = max(set(response), key=response.count)
-                if isinstance(response, tuple):
-                    response = str(list(response))
-                    # remove []'s
-                    response = response[1:-1]
+                orig_response = metadata_str_dict_by_name[(name, "MODE_LLM")][
+                    "metadata_dict"
+                ]["orig_response"]
+                response_sonnet = metadata_str_dict_by_name[(name, llm_sonnet)][
+                    "metadata_dict"
+                ]["response"]
+                response_list = response  # DEBUG
+                if response:
+                    print(f"\nresponse_list: {response_list}", file=sys.stdout)
+                    if len(set(response)) == len(response):
+                        # if nobody agrees, go with smartest model
+                        response = response_sonnet
+                    else:
+                        response = most_common_or_default(response, response_sonnet)
+                        if isinstance(response, tuple):
+                            response = ", ".join(map(str, response))
+                        else:
+                            response = str(response)
                 else:
-                    response = str(response)
+                    response = ""
                 expected = metadata_str_dict_by_name[(name, "MODE_LLM")][
                     "metadata_dict"
                 ]["expected_answer"]
+                good_answer0 = question_scorer(orig_response, expected[0][0])
+                good_answer = question_scorer(response, expected[0][0])
+
+                # DEBUG:
+                good_sonnet = question_scorer(response_sonnet, expected[0][0])
+                sonnet_good_mode_bad = not good_answer and good_sonnet
+                if sonnet_good_mode_bad:
+                    print(
+                        f"sonnet_good_mode_bad: {name} {response_list}", file=sys.stdout
+                    )
+
+                checking_one = False
+                if checking_one:
+                    if good_answer0 != good_answer:
+                        print(name)
+
                 metadata_str_dict_by_name[(name, "MODE_LLM")]["failure"] = (
-                    None if question_scorer(response, expected[0][0]) else "failure"
+                    None if good_answer else "failure"
                 )
         llms.append("MODE_LLM")
+
+        # use test if test set
+        df = pd.read_csv("parse/tests/gaia_validation_df.csv")
 
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.items():
             metadata_dict = metadata_str_dict1["metadata_dict"]
             failure = metadata_str_dict1["failure"]
+            level_meta = metadata_dict.get("level")
+
+            df2 = df[df["name"] == name]
+            assert df2.shape[0] == 1
+            level = str(df2["level"].values[0])
+            if level_meta:
+                assert level == level_meta
+            else:
+                level_meta = str(level)
+
             for key in gaia_tool_categories:
                 if key != "passed":
                     gaia_tool_categories[key][llm].append(
@@ -976,9 +1079,12 @@ def test_pass_rate_e2e():
 
             for key in gaia_levels:
                 if key != "passed":
-                    gaia_levels[key][llm].append(
-                        1 if str(key) == str(metadata_dict["level"]) else 0
-                    )
+                    if key == "0":
+                        gaia_levels[key][llm].append(1)
+                    else:
+                        gaia_levels[key][llm].append(
+                            1 if str(key) == str(level_meta) else 0
+                        )
             gaia_levels["passed"][llm].append(1 if failure is None else 0)
 
         if len(gaia_tool_categories) > 0:
@@ -1108,3 +1214,149 @@ def group_and_sort_metadata(metadata_str_dict):
     return [
         (llm, sorted(test_cases, key=lambda x: x[0])) for llm, test_cases in sorted_data
     ]
+
+
+def test_merge_many_runs():
+    import os
+    import tarfile
+    import zipfile
+    import shutil
+    import json
+    from pathlib import Path
+    from bs4 import BeautifulSoup
+
+    # Input parameters
+    target_llm_name = "claude-3-5-sonnet-20240620"  # Only include data for this LLM
+    artifacts_dir = "/home/jon/Downloads/all_main_gaia/artifacts"
+    base_output_dir = os.path.join("./", "agent_results", "gaia")
+    merged_test_client_path = os.path.join("./", "test_client.xml")
+
+    # Ensure the output directory exists
+    temp_output_dir = os.path.join("./", "temp")
+    os.makedirs(base_output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(merged_test_client_path), exist_ok=True)
+
+    # Initialize containers for merged test cases and attributes
+    merged_test_cases = []
+    aggregated_attributes = {"skipped": 0, "errors": 0, "failures": 0, "tests": 0}
+
+    # Function to extract a specific file from a ZIP archive
+    def extract_file_from_zip(zip_path, target_file, extract_to):
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            for file in zip_ref.namelist():
+                if file.endswith(target_file):
+                    zip_ref.extract(file, extract_to)
+                    return os.path.join(extract_to, file)
+        raise FileNotFoundError(f"{target_file} not found in {zip_path}")
+
+    # Function to extract a specific folder from a tar.gz archive
+    def extract_folder_from_tar_gz(tar_path, target_folder, extract_to):
+        with tarfile.open(tar_path, "r:gz") as tar_ref:
+            for member in tar_ref.getmembers():
+                if member.name.startswith(target_folder):
+                    tar_ref.extract(member, extract_to)
+            return os.path.join(extract_to, target_folder)
+
+    # Recursively copy meta_data.json files to the new structure
+    def copy_meta_data_files(base_path, llm_name, llm_label, output_base):
+        llm_path = os.path.join(base_path, llm_name)
+        if os.path.exists(llm_path):
+            for root, _, files in os.walk(llm_path):
+                if "meta_data.json" in files:
+                    task_id = Path(root).name
+                    output_dir = os.path.join(output_base, llm_label, task_id)
+                    os.makedirs(output_dir, exist_ok=True)
+                    shutil.copy(
+                        os.path.join(root, "meta_data.json"),
+                        os.path.join(output_dir, "meta_data.json"),
+                    )
+
+    # Iterate through all RUN_ID directories
+    run_dirs = [
+        os.path.join(artifacts_dir, run_id)
+        for run_id in os.listdir(artifacts_dir)
+        if os.path.isdir(os.path.join(artifacts_dir, run_id))
+    ]
+
+    llm_labels = []
+    for run_dir in run_dirs:
+        run_id = os.path.basename(run_dir)  # Use run_id as the label
+        llm_label = run_id  # Rename llm_label to run_id
+        llm_labels.append(llm_label)
+        print(f"Processing artifacts in {run_dir} as {llm_label}...")
+
+        # Create a temporary directory to extract files
+        temp_dir = os.path.join(temp_output_dir, f"temp_{llm_label}")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Extract gaia folder
+        try:
+            zip_path = os.path.join(run_dir, "agent_results tar gz.zip")
+            tar_gz_path = extract_file_from_zip(
+                zip_path, "agent_results.tar.gz", temp_dir
+            )
+            gaia_folder = extract_folder_from_tar_gz(
+                tar_gz_path, "agent_results/gaia", temp_dir
+            )
+        except (FileNotFoundError, zipfile.BadZipFile) as e:
+            print(f"Error: {e}")
+            continue
+
+        # Copy meta_data.json files to the new structure
+        copy_meta_data_files(gaia_folder, target_llm_name, llm_label, base_output_dir)
+
+        # Extract test_client.xml
+        try:
+            test_client_path = extract_file_from_zip(
+                os.path.join(run_dir, "test_client_xml.zip"),
+                "test_client.xml",
+                temp_dir,
+            )
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            continue
+
+        # Read and merge test_client.xml, filtering only the target LLM
+        with open(test_client_path, "r") as xml_file:
+            bs_data = BeautifulSoup(xml_file.read(), "xml")
+            test_suite = bs_data.find("testsuite")
+            if not test_suite:
+                print(f"No testsuite found in {test_client_path}")
+                continue
+
+            # Aggregate attributes
+            for attr in aggregated_attributes.keys():
+                aggregated_attributes[attr] += int(test_suite.get(attr, 0))
+
+            test_suite["hostname"] = llm_label  # Update hostname to run_id
+            for test_case in test_suite.find_all("testcase"):
+                if target_llm_name in test_case.get(
+                    "name", ""
+                ):  # Include only target LLM test cases
+                    test_case["name"] = test_case["name"].replace(
+                        target_llm_name, llm_label
+                    )  # Rename LLM in test case name
+                    merged_test_cases.append(test_case)
+
+        # Clean up temporary directory
+        shutil.rmtree(temp_dir)
+
+    print("llm_labels", llm_labels)
+
+    # Write merged test_client.xml
+    soup = BeautifulSoup(features="xml")
+    test_suite_tag = soup.new_tag(
+        "testsuite",
+        hostname="merged",
+        skipped=str(aggregated_attributes["skipped"]),
+        errors=str(aggregated_attributes["errors"]),
+        failures=str(aggregated_attributes["failures"]),
+        tests=str(aggregated_attributes["tests"]),
+    )
+    for test_case in merged_test_cases:
+        test_suite_tag.append(test_case)
+
+    soup.append(test_suite_tag)
+    with open(merged_test_client_path, "w") as xml_file:
+        xml_file.write(soup.prettify())
+    print(f"Merged test_client.xml saved at {merged_test_client_path}")
