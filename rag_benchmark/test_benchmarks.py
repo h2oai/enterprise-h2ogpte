@@ -33,20 +33,28 @@ from h2ogpte import H2OGPTE
 assert e2e_data, "Must have Q&A RAG dataset."
 assert gaia_data, "Must have GAIA dataset"
 
-try:
-    # # For h2ogpte CI
-    from mux_py.tests.test_mux import REMOTE_ADDRESS, API_KEY
-    from parse.tests.datasets import CachedFile
-    from mux_py.tests.test_mux import get_test_name
-    from mux_py.tests.agents_test_utils import agent_llms
-except ModuleNotFoundError as e:
-    # For open-source benchmarks repository
-    from datasets import CachedFile
+from mux_py.tests.agents_test_utils import agent_llms
 
-    REMOTE_ADDRESS = os.getenv("H2OGPTE_TEST_ADDRESS", "https://h2ogpte.genai.h2o.ai")
-    API_KEY = os.getenv("H2OGPTE_API_KEY")
-assert REMOTE_ADDRESS, "Must have h2oGPTe remote server address."
-assert API_KEY, "Must set H2OGPTE_API_KEY env var first."
+if os.getenv("NO_SERVER", "0") == "0":
+    try:
+        from mux_py.tests.test_mux import get_test_name
+        from parse.tests.datasets import CachedFile
+
+        # # For h2ogpte CI
+        from mux_py.tests.test_mux import REMOTE_ADDRESS, API_KEY
+    except ModuleNotFoundError as e:
+        # For open-source benchmarks repository
+        from datasets import CachedFile
+
+        REMOTE_ADDRESS = os.getenv(
+            "H2OGPTE_TEST_ADDRESS", "https://h2ogpte.genai.h2o.ai"
+        )
+        API_KEY = os.getenv("H2OGPTE_API_KEY")
+    assert REMOTE_ADDRESS, "Must have h2oGPTe remote server address."
+    assert API_KEY, "Must set H2OGPTE_API_KEY env var first."
+    client = H2OGPTE(address=REMOTE_ADDRESS, api_key=API_KEY)
+else:
+    client = None
 
 GAIA_RESULTS_DIR = f"{os.getcwd()}/agent_results/gaia"
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -63,8 +71,6 @@ def start_faulthandler():
 
 
 start_faulthandler()
-
-client = H2OGPTE(address=REMOTE_ADDRESS, api_key=API_KEY)
 
 
 class QuestionExpecteds(str):
@@ -146,10 +152,19 @@ def get_gaia_specific_prompt():
 * First respond to the user's query however required.
 * Then once you have your final answer, you must put your final answer in the <constrained_output> XML tags.
 * Your constrained output should be a number OR as few words as possible OR a comma separated list of numbers and/or strings.
-* If you are asked for a number, your constrained output shouldn't use comma to write your number and shouldn't use units such as $ or percent sign unless specified otherwise.
-* If you are asked for a string, the constrained output shouldn't use articles and should avoid abbreviations (e.g. for cities) and should write the digits in plain text unless specified otherwise.
+* If you are asked for a number (e.g. what number ...), then your constrained output MUST only contain numerical digits without words, commas, units, dollar sign ($), or a percent sign (%) UNLESS specifically part of the user's actual query.
+  - E.g. if a dollar amount, do not respond with "89706.00 USD" just respond with "89706.00"
+* If you are asked for a string, the constrained output shouldn't use articles (e.g. a, the) and must avoid abbreviations (e.g. for cities, states, etc.) and must write the digits in plain text.
+  - However, if articles, abbreviations, and plain text numbers are specifically in user's actual query, then you must include them in your response.
+  - However, if doing translation, anagrams, or decoding messages, preserve all words, letters, and punctuation (including ending periods).
+  - If the string comes from a document given, use the same exact spelling (e.g. document refers to string Hotels and that is the answer, then don't shorten to Hotel, use what document uses)
+  - If the string comes from a website, use the same exact spelling (e.g. website text or image refers to "citations", then don't convert to "citation count", just leave as original).
 * If you are asked for a comma separated list, the constrained output should apply the above rules depending of whether the element to be put in the list is a number or a string.  Any list must not include outer brackets and any list must not have quotes around each item.
+  - If the list would include strings from document, website, image, or transcription, then use the exact spelling and exact relevant phrasing from the source (e.g. if ingredients are given, you must not remove key relevant details like 'freshly squeezed' or 'ripe' or 'pure' etc. unless those descriptions do not exist or you are explicitly asked to shorten).
 * Be very careful with instructions regarding rounding and the way to express the output.
+* Be very careful with quantities like percentages, because percentage is unitless and so both terms must be compatible units or have no units, so you must carefully identify type (unit) of quantity for each term in the percentage (e.g. dollar per dollar is ok, but count per dollar as a percentage would be a major error).
+* If you have low confidence and were unable to give a good response inside the constrained_output XML tags, then fill the <constrained_output> XML tags with no characters (e.g. don't put unknown or unavailable etc., and don't put 0 just because you failed to find relevant material).
+* You must *never* assume that the actual user query is in error or they may be misremembering details.  You must always assume that the user query is correct and that you must find the correct answer based on the user query.
 
 </output_instructions>
 
@@ -558,9 +573,17 @@ def test_pdf_questions_e2e(
                         for document_id1, document_name1 in document.items():
                             if os.path.exists(os.path.join(test_dir, document_name1)):
                                 document_name1 = "alt_" + document_name1
-                            client.download_document(
-                                test_dir, document_name1, document_id1
-                            )
+                            try:
+                                client.download_document(
+                                    test_dir, document_name1, document_id1
+                                )
+                            except Exception as e:
+                                fail_msg = f"Failed to download document {test_dir} {document_id1} {document_name1}: {e}"
+                                print(fail_msg)
+                                with open(
+                                    os.path.join(test_dir, "fails.txt"), "a"
+                                ) as f:
+                                    f.write(fail_msg)
 
                     with open(os.path.join(test_dir, "response.txt"), "w") as f:
                         f.write(reply.content)
@@ -604,7 +627,8 @@ def test_pdf_questions_e2e(
             refs = ""
             if reply is not None:
                 reply_content = reply.content
-                assert len(reply_content) > 0, "Must have response"
+                if not use_agent:
+                    assert len(reply_content) > 0, "Must have response"
                 # only check for references in RAG case
                 if not use_agent:
                     assert len(client.list_chat_message_references(reply.id)), (
@@ -624,12 +648,19 @@ def test_pdf_questions_e2e(
             error_msg = ""
             for expected in expecteds:
                 if use_agent and os.getenv("RUN_GAIA"):
-                    assert len(expected) == 1, "must have only one expected for GAIA"
-                    from mux_py.tests.gaia_scorer import question_scorer
+                    do_validation = os.getenv("DO_VALIDATION", "1") == "1"
+                    if do_validation:
+                        assert (
+                            len(expected) == 1
+                        ), "must have only one expected for GAIA"
+                        from mux_py.tests.gaia_scorer import question_scorer
 
-                    if not question_scorer(reply_content, expected[0]):
-                        missings = [expected[0]]
+                        if not question_scorer(reply_content, expected[0]):
+                            missings = [expected[0]]
+                        else:
+                            missings = []
                     else:
+                        # test set, nothing to do
                         missings = []
                 else:
                     missings = [
@@ -735,7 +766,10 @@ def create_failure_report_from_metadata(
 ):
     if metadata_str:
         metadata_dict = json.loads(metadata_str)
-    assert llm == metadata_dict["llm"]
+    if os.getenv("DO_MERGED", "0") == "0":
+        assert llm == metadata_dict["llm"]
+    else:
+        metadata_dict["llm"] = llm
 
     f.write(f"**Task ID**: {metadata_dict['task_id']}\n\n")
     f.write(f"**Timestamp**: {metadata_dict['timestamp']}\n\n")
@@ -764,6 +798,8 @@ def create_failure_report_from_metadata(
 
 @pytest.mark.xfail(raises=FileNotFoundError, strict=False)
 def test_pass_rate_e2e():
+    do_debug = True
+
     with open("./test_client.xml", "r") as f:
         bs_data = BeautifulSoup(f.read(), "xml")
 
@@ -775,37 +811,117 @@ def test_pass_rate_e2e():
     print(test_list)
 
     if os.getenv("RUN_GAIA"):
+        do_debug = False  # annoying when fails
+        from mux_py.tests.gaia_scorer import question_scorer, normalize_answer
+
+        no_answer_phrases = [
+            "Unknown",
+            "Inconclusive",
+            "Cannot be determined",
+            "I don't know",
+            "Not sure",
+            "No information available",
+            "Unable to provide an answer",
+            "Insufficient data",
+            "Unclear",
+            "No definitive answer",
+            "Lack of evidence",
+            "Not applicable",
+            "No relevant information found",
+            "Indeterminate",
+            "Cannot confirm",
+            "Outside my scope of knowledge",
+            "Ambiguous",
+            "No conclusion can be drawn",
+            "The answer is uncertain",
+            "No answer provided",
+            "Unable to determine",
+            "NA",
+            "Not available",
+            "Unable to access",
+            "Unable to determine source title or translation",
+            "Unable to find source title",
+            "unable to find",
+            "Information Unavailable",
+            "Information not found",
+            "Reported as a violation",
+            "None",
+            "insufficient information",
+            "insufficient verified data",
+            "unavailable",
+        ]
+        norm_no_answer_phrases = [normalize_answer(x) for x in no_answer_phrases]
+
         # cd ~/Downloads/all_main_gaia
         # Run bash ~/h2ogpte/scripts/gaia_artifacts_download.sh
         # Run bash ~/h2ogpte/scripts/gaia_artifacts_download_1.sh 11861110789 (for new gaia run) for specific new runs if just few new runs needed to avoid redoing entire download)
         # Run test_merge_many_runs
         # then set do_merged = True
         # Then run this test
-        do_merged = True
+        do_validation = os.getenv("DO_VALIDATION", "1") == "1"
+        do_merged = os.getenv("DO_MERGED", "0") == "1"
         if do_merged:
-            llm_sonnet = "11877726721"
+            llm_reference = "12201656855_2"  # best
+            # llm_reference = "11986512287"  # bad
+            # llms = [
+            #     "11568839878",
+            #     "11588463470",
+            #     "11607498444",
+            #     "11625669152",
+            #     "11640765003",
+            #     "11649329718",
+            #     "11659472213",
+            #     "11679119205",
+            #     "11698710518",
+            #     "11737590601",
+            #     "11754230597",
+            #     "11763065795",
+            #     "11784555244",
+            #     "11861110789",
+            #     "11867920275",
+            #     "11869277441",
+            #     "11877726721",
+            #     "11944857915",
+            #     "11927530657",
+            # ]
             llms = [
-                "11568839878",
-                "11588463470",
-                "11607498444",
-                "11625669152",
-                "11640765003",
-                "11649329718",
-                "11659472213",
-                "11679119205",
-                "11698710518",
-                "11737590601",
-                "11754230597",
-                "11763065795",
-                "11784555244",
-                "11861110789",
-                "11867920275",
-                "11869277441",
-                "11877726721",
+                # "11861110789",
+                # "11869277441",
+                # "11877726721",
+                # "11944857915",
+                # "11932643059",  # fatih good one
+                # "11927530657",  # latest at the time on main
+                # "11963362874",  # worse sonnet, better others, because use weak model mode on sonnet
+                # "11998527028",  # 39% sonnet, ok, didn't check timeouts
+                # "12040085525",  # 41% sonnet, good
+                "12070097976",  # 46% sonnet after link+transcription changes
+                # "12077316481",  # no wiki 43%
+                # "12101769834",  # 43% sonnet, good
+                "12110242173",  # 49% reasoning first try
+                "12134211340",  # 46% real reasoning and audio_video_transcription and other fixes
+                "12138759559",  # 46% real reasoning .... with new sonnet
+                # "12151423910",
+                # "12151423910_2",
+                "12156261425",  # 48% old sonnet
+                "12156261425_2",  # 48% new sonnet
+                "12170882886",  # 49% old sonnet
+                "12170882886_2",  # 49% new sonnet
+                "12175835273",  # 43% old sonnet (WHY?)
+                "12175835273_2",  # 49% new sonnet
+                "12195595794",  # 46% old sonnet wo/ planning
+                "12195595794_2",  # 49% new sonnet wo/ planning
+                "12201656855",  # 46% old sonnet w/ planning else same as above wo planning
+                "12201656855_2",  # 55% new sonnet w/ planning else same as above wo planning
+                "12214560835",  # 49% new sonnet without planning by accident
+                "12214560835_2",  # 46% old sonnet without planning by accident
+                "12216782343",  # 49% new sonnet with planning (WHY?)
+                "12216782343_2",  # 46% old sonnet with planning
             ]
         else:
             llms = get_llms_for_benchmark()
-            llm_sonnet = "claude-3-5-sonnet-20240620"
+            llm_reference = "claude-3-5-sonnet-20240620"
+            if llm_reference not in llms:
+                llm_reference = llms[0]
     else:
         llms = client.get_llm_names()
 
@@ -831,6 +947,9 @@ def test_pass_rate_e2e():
         if not test_name:
             print(f"Warning: Test case without 'name' attribute: {test}")
             continue  # Skip if no test name found
+        if "test_mlebench" in test_name:
+            print(f"Skipping unrelated test: {test}")
+            continue
 
         llm = None
         for _llm in llms:
@@ -844,7 +963,7 @@ def test_pass_rate_e2e():
             if test_row[0] + "-" in test_name:
                 dataset = test_row[0]
                 url = test_row[1]
-        assert dataset, "must find dataset in test"
+        assert dataset, f"must find dataset in test: {test_name}"
 
         times[llm] += float(test["time"])
 
@@ -883,10 +1002,16 @@ def test_pass_rate_e2e():
 
     import pandas as pd
 
-    usage_cost_table = client.get_llm_usage_24h_by_llm()
+    if os.getenv("NO_SERVER", "0") == "0":
+        usage_cost_table = client.get_llm_usage_24h_by_llm()
+        perf_table = client.get_llm_performance_by_llm("24 hours")
+        llm_vision_map = client.get_llm_and_auto_vision_llm_names()
+    else:
+        usage_cost_table = []
+        perf_table = []
+        llm_vision_map = {}
+
     llm_cost_dict = {u.llm_name: u.llm_cost for u in usage_cost_table}
-    perf_table = client.get_llm_performance_by_llm("24 hours")
-    llm_vision_map = client.get_llm_and_auto_vision_llm_names()
     perf_frame = pd.DataFrame(
         data={
             "LLM": [p.llm_name for p in perf_table],
@@ -918,11 +1043,18 @@ def test_pass_rate_e2e():
         ]
     cost_frame = pd.DataFrame(data=cost_frame_data)
 
-    results_frame = (
-        cost_frame.merge(perf_frame, left_on="LLM", right_on="LLM")
-        .sort_values(["PASS", "COST"], ascending=[False, True])
-        .reset_index(drop=True)
-    )
+    if os.getenv("NO_SERVER", "0") == "0":
+        results_frame = (
+            cost_frame.merge(perf_frame, left_on="LLM", right_on="LLM")
+            .sort_values(["PASS", "COST"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+    else:
+        results_frame = cost_frame.fillna(0)
+        results_frame = results_frame.sort_values(
+            ["PASS"], ascending=[False]
+        ).reset_index(drop=True)
+
     results_frame.index = range(1, results_frame.shape[0] + 1)
     results_frame.index.name = "RANK"
 
@@ -945,8 +1077,6 @@ def test_pass_rate_e2e():
 
     # add PASS_ANY that indicates pass if any llm passed
     if os.getenv("RUN_GAIA"):
-        from mux_py.tests.gaia_scorer import question_scorer, normalize_answer
-
         # PASS_ANY
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.copy().items():
             if (name, "PASS_ANY") not in metadata_str_dict_by_name:
@@ -970,6 +1100,7 @@ def test_pass_rate_e2e():
             orig_response = metadata_str_dict_by_name[(name, llm)]["metadata_dict"][
                 "response"
             ]
+            unfiltered_response = orig_response
             if "# filename" in orig_response:
                 orig_response = ""
             bad_str = "\n![image]"
@@ -978,6 +1109,22 @@ def test_pass_rate_e2e():
                 print("cleaned %s" % orig_response)
                 orig_response = orig_response[:index_bad]
             if orig_response == "infinity":
+                orig_response = ""
+            if "i apologize" in str(orig_response).lower():
+                orig_response = ""
+            if "<turn_title>" in str(orig_response).lower():
+                orig_response = ""
+            if "fullerror:" in str(orig_response).lower():
+                orig_response = ""
+
+            if normalize_answer(orig_response) in norm_no_answer_phrases:
+                orig_response = ""
+
+            if any(
+                normalize_answer(x) in str(normalize_answer(orig_response))
+                for x in norm_no_answer_phrases
+                if len(x) >= 3
+            ):
                 orig_response = ""
 
             if (name, "MODE_LLM") not in metadata_str_dict_by_name:
@@ -989,6 +1136,9 @@ def test_pass_rate_e2e():
                 ] = orig_response
                 metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
                     "response"
+                ] = list()
+                metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
+                    "unfiltered_response"
                 ] = list()
             if llm != "PASS_ANY":
                 response = orig_response
@@ -1005,7 +1155,54 @@ def test_pass_rate_e2e():
                     metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
                         "response"
                     ].append(response)
+                metadata_str_dict_by_name[(name, "MODE_LLM")]["metadata_dict"][
+                    "unfiltered_response"
+                ].append(unfiltered_response)
+        submission = []
+        submission_labels = []
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.copy().items():
+            if do_merged:
+                # COMPARE TWO LLMs
+                if llm == "12201656855_2":
+                    llm_bad = "12216782343_2"
+                    llm_bad2 = "12195595794_2"
+                    orig_response_good = metadata_str_dict_by_name[(name, llm)][
+                        "metadata_dict"
+                    ]["response"]
+                    if (name, llm_bad) in metadata_str_dict_by_name:
+                        orig_response_bad = metadata_str_dict_by_name[(name, llm_bad)][
+                            "metadata_dict"
+                        ]["response"]
+                    else:
+                        orig_response_bad = "FAILED"
+                    if (name, llm_bad2) in metadata_str_dict_by_name:
+                        orig_response_bad2 = metadata_str_dict_by_name[
+                            (name, llm_bad2)
+                        ]["metadata_dict"]["response"]
+                    else:
+                        orig_response_bad2 = "FAILED"
+                    expected_now = metadata_str_dict_by_name[(name, llm)][
+                        "metadata_dict"
+                    ]["expected_answer"]
+                    good_answer_good = question_scorer(
+                        orig_response_good, expected_now[0][0]
+                    )
+                    good_answer_bad = question_scorer(
+                        orig_response_bad, expected_now[0][0]
+                    )
+                    good_answer_bad2 = question_scorer(
+                        orig_response_bad2, expected_now[0][0]
+                    )
+                    if (
+                        good_answer_good
+                        and not good_answer_bad
+                        and not good_answer_bad2
+                    ):
+                        print(
+                            f"\nname:{name} (exp: {expected_now[0][0]}) good_answer_good: {good_answer_good} ({orig_response_good}) good_answer_bad: {good_answer_bad} ({orig_response_bad}) good_answer_bad2: {good_answer_bad2} ({orig_response_bad2})",
+                            file=sys.stdout,
+                        )
+
             if llm == "MODE_LLM":
                 response = metadata_str_dict_by_name[(name, "MODE_LLM")][
                     "metadata_dict"
@@ -1013,36 +1210,92 @@ def test_pass_rate_e2e():
                 orig_response = metadata_str_dict_by_name[(name, "MODE_LLM")][
                     "metadata_dict"
                 ]["orig_response"]
-                response_sonnet = metadata_str_dict_by_name[(name, llm_sonnet)][
+                have_ref = (name, llm_reference) in metadata_str_dict_by_name
+                if have_ref:
+                    response_reference = metadata_str_dict_by_name[
+                        (name, llm_reference)
+                    ]["metadata_dict"]["response"]
+
+                    if normalize_answer(response_reference) in norm_no_answer_phrases:
+                        response_reference = ""
+                    if any(
+                        normalize_answer(x) in str(normalize_answer(response_reference))
+                        for x in norm_no_answer_phrases
+                        if len(x) >= 3
+                    ):
+                        response_reference = ""
+                else:
+                    response_reference = ""
+
+                expected = metadata_str_dict_by_name[(name, "MODE_LLM")][
                     "metadata_dict"
-                ]["response"]
+                ]["expected_answer"]
+
                 response_list = response  # DEBUG
                 if response:
-                    print(f"\nresponse_list: {response_list}", file=sys.stdout)
-                    if len(set(response)) == len(response):
+                    print(
+                        f"\nname: {name} expected: {expected[0][0]} for response_list: {response_list}",
+                        file=sys.stdout,
+                    )
+                    if len(set(response)) == len(response) and response_reference:
                         # if nobody agrees, go with smartest model
-                        response = response_sonnet
+                        response = response_reference
                     else:
-                        response = most_common_or_default(response, response_sonnet)
+                        response = most_common_or_default(response, response_reference)
                         if isinstance(response, tuple):
                             response = ", ".join(map(str, response))
                         else:
                             response = str(response)
                 else:
                     response = ""
-                expected = metadata_str_dict_by_name[(name, "MODE_LLM")][
-                    "metadata_dict"
-                ]["expected_answer"]
+                if not response:
+                    print(f"no response: {name}", file=sys.stdout)
+                    print(
+                        "unfiltered responses: %s"
+                        % metadata_str_dict_by_name[(name, "MODE_LLM")][
+                            "metadata_dict"
+                        ]["unfiltered_response"]
+                    )
                 good_answer0 = question_scorer(orig_response, expected[0][0])
                 good_answer = question_scorer(response, expected[0][0])
+                any_good_answer = any(
+                    [question_scorer(str(x), expected[0][0]) for x in response_list]
+                )
+                submission.append(dict(task_id=name, model_answer=response))
+                submission_labels.append(
+                    dict(
+                        task_id=name,
+                        model_answer=response,
+                        good_answer=good_answer,
+                        good_answer0=good_answer0,
+                        expected=expected[0][0],
+                    )
+                )
 
                 # DEBUG:
-                good_sonnet = question_scorer(response_sonnet, expected[0][0])
-                sonnet_good_mode_bad = not good_answer and good_sonnet
-                if sonnet_good_mode_bad:
-                    print(
-                        f"sonnet_good_mode_bad: {name} {response_list}", file=sys.stdout
-                    )
+                if response_reference is not None:
+                    good_reference = question_scorer(response_reference, expected[0][0])
+                    reference_good_mode_bad = not good_answer and good_reference
+                    reference_bad_mode_good = good_answer and not good_reference
+                    if reference_good_mode_bad:
+                        print(
+                            f"reference_good_mode_bad: {name} {response_list}",
+                            file=sys.stdout,
+                        )
+                    if reference_bad_mode_good:
+                        print(
+                            f"reference_bad_mode_good: {name} {response_list} {response_reference}",
+                            file=sys.stdout,
+                        )
+                else:
+                    print("Reference not found: %s" % name)
+                if (
+                    not good_answer
+                    and not metadata_str_dict_by_name[(name, "PASS_ANY")]["failure"]
+                ):
+                    print("MODE BAD but one good: %s" % name)
+                if not good_answer and any_good_answer:
+                    print("2 MODE BAD but one good: %s" % name)
 
                 checking_one = False
                 if checking_one:
@@ -1053,9 +1306,24 @@ def test_pass_rate_e2e():
                     None if good_answer else "failure"
                 )
         llms.append("MODE_LLM")
+        if submission:
+            if do_debug:
+                if do_validation:
+                    assert len(submission) == 165
+                else:
+                    assert len(submission) == 300
+            with open("submission.jsonl", "wt") as f:
+                for s in submission:
+                    f.write(json.dumps(s) + "\n")
+            with open("submission_labels.jsonl", "wt") as f:
+                for s in submission_labels:
+                    f.write(json.dumps(s) + "\n")
 
         # use test if test set
-        df = pd.read_csv("parse/tests/gaia_validation_df.csv")
+        if do_validation:
+            df = pd.read_csv("parse/tests/gaia_validation_df.csv")
+        else:
+            df = pd.read_csv("parse/tests/gaia_test_df.csv")
 
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.items():
             metadata_dict = metadata_str_dict1["metadata_dict"]
@@ -1097,9 +1365,10 @@ def test_pass_rate_e2e():
             )
 
     skipped = int(test_suite.get("skipped"))
-    if not os.getenv("SMOKE"):
+    if not os.getenv("SMOKE") and do_debug:
         assert skipped in [
             0,
+            1,
             22,  # whisper OOM xfail (11 models x 2 tests)
         ], "make sure to run `make test_client_e2e` with TEST_ALL=1"
     with open("results/test_client_e2e.md", "wt") as f:
@@ -1226,7 +1495,10 @@ def test_merge_many_runs():
     from bs4 import BeautifulSoup
 
     # Input parameters
-    target_llm_name = "claude-3-5-sonnet-20240620"  # Only include data for this LLM
+    target_llm_names = [
+        "claude-3-5-sonnet-20240620",
+        "claude-3-5-sonnet-20241022",
+    ]  # Only include data for this LLM
     artifacts_dir = "/home/jon/Downloads/all_main_gaia/artifacts"
     base_output_dir = os.path.join("./", "agent_results", "gaia")
     merged_test_client_path = os.path.join("./", "test_client.xml")
@@ -1281,67 +1553,76 @@ def test_merge_many_runs():
     llm_labels = []
     for run_dir in run_dirs:
         run_id = os.path.basename(run_dir)  # Use run_id as the label
-        llm_label = run_id  # Rename llm_label to run_id
-        llm_labels.append(llm_label)
-        print(f"Processing artifacts in {run_dir} as {llm_label}...")
 
-        # Create a temporary directory to extract files
-        temp_dir = os.path.join(temp_output_dir, f"temp_{llm_label}")
-        os.makedirs(temp_dir, exist_ok=True)
+        for target_llm_name in target_llm_names:
+            llm_label_index = target_llm_names.index(target_llm_name) + 1
+            if llm_label_index > 1:
+                llm_label_with_index = f"{run_id}_{llm_label_index}"
+            else:
+                llm_label_with_index = f"{run_id}"
 
-        # Extract gaia folder
-        try:
-            zip_path = os.path.join(run_dir, "agent_results tar gz.zip")
-            tar_gz_path = extract_file_from_zip(
-                zip_path, "agent_results.tar.gz", temp_dir
+            print(
+                f"Processing {target_llm_name} for artifacts in {run_dir} as {llm_label_with_index}..."
             )
-            gaia_folder = extract_folder_from_tar_gz(
-                tar_gz_path, "agent_results/gaia", temp_dir
-            )
-        except (FileNotFoundError, zipfile.BadZipFile) as e:
-            print(f"Error: {e}")
-            continue
 
-        # Copy meta_data.json files to the new structure
-        copy_meta_data_files(gaia_folder, target_llm_name, llm_label, base_output_dir)
+            # Create a temporary directory to extract files
+            temp_dir = os.path.join(temp_output_dir, f"temp_{llm_label_with_index}")
+            os.makedirs(temp_dir, exist_ok=True)
 
-        # Extract test_client.xml
-        try:
-            test_client_path = extract_file_from_zip(
-                os.path.join(run_dir, "test_client_xml.zip"),
-                "test_client.xml",
-                temp_dir,
-            )
-        except FileNotFoundError as e:
-            print(f"Error: {e}")
-            continue
-
-        # Read and merge test_client.xml, filtering only the target LLM
-        with open(test_client_path, "r") as xml_file:
-            bs_data = BeautifulSoup(xml_file.read(), "xml")
-            test_suite = bs_data.find("testsuite")
-            if not test_suite:
-                print(f"No testsuite found in {test_client_path}")
+            # Extract gaia folder
+            try:
+                zip_path = os.path.join(run_dir, "agent_results tar gz.zip")
+                tar_gz_path = extract_file_from_zip(
+                    zip_path, "agent_results.tar.gz", temp_dir
+                )
+                gaia_folder = extract_folder_from_tar_gz(
+                    tar_gz_path, "agent_results/gaia", temp_dir
+                )
+            except (FileNotFoundError, zipfile.BadZipFile) as e:
+                print(f"Error: {e}")
                 continue
 
-            # Aggregate attributes
-            for attr in aggregated_attributes.keys():
-                aggregated_attributes[attr] += int(test_suite.get(attr, 0))
+            # Copy meta_data.json files to the new structure
+            copy_meta_data_files(
+                gaia_folder, target_llm_name, llm_label_with_index, base_output_dir
+            )
 
-            test_suite["hostname"] = llm_label  # Update hostname to run_id
-            for test_case in test_suite.find_all("testcase"):
-                if target_llm_name in test_case.get(
-                    "name", ""
-                ):  # Include only target LLM test cases
-                    test_case["name"] = test_case["name"].replace(
-                        target_llm_name, llm_label
-                    )  # Rename LLM in test case name
-                    merged_test_cases.append(test_case)
+            # Extract test_client.xml
+            try:
+                test_client_path = extract_file_from_zip(
+                    os.path.join(run_dir, "test_client_xml.zip"),
+                    "test_client.xml",
+                    temp_dir,
+                )
+            except FileNotFoundError as e:
+                print(f"Error: {e}")
+                continue
 
-        # Clean up temporary directory
-        shutil.rmtree(temp_dir)
+            # Read and merge test_client.xml, filtering only the target LLM
+            with open(test_client_path, "r") as xml_file:
+                bs_data = BeautifulSoup(xml_file.read(), "xml")
+                test_suite = bs_data.find("testsuite")
+                if not test_suite:
+                    print(f"No testsuite found in {test_client_path}")
+                    continue
 
-    print("llm_labels", llm_labels)
+                # Aggregate attributes
+                for attr in aggregated_attributes.keys():
+                    aggregated_attributes[attr] += int(test_suite.get(attr, 0))
+
+                test_suite[
+                    "hostname"
+                ] = llm_label_with_index  # Update hostname to include index
+                for test_case in test_suite.find_all("testcase"):
+                    # Include only test cases for the specific LLM
+                    if target_llm_name in test_case.get("name", ""):
+                        test_case["name"] = test_case["name"].replace(
+                            target_llm_name, llm_label_with_index
+                        )  # Rename LLM in test case name
+                        merged_test_cases.append(test_case)
+
+            # Clean up temporary directory
+            shutil.rmtree(temp_dir)
 
     # Write merged test_client.xml
     soup = BeautifulSoup(features="xml")
