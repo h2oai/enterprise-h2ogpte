@@ -849,6 +849,7 @@ def test_pass_rate_e2e():
             "insufficient information",
             "insufficient verified data",
             "unavailable",
+            "No Compound Found",
         ]
         norm_no_answer_phrases = [normalize_answer(x) for x in no_answer_phrases]
 
@@ -916,6 +917,16 @@ def test_pass_rate_e2e():
                 "12214560835_2",  # 46% old sonnet without planning by accident
                 "12216782343",  # 49% new sonnet with planning (WHY?)
                 "12216782343_2",  # 46% old sonnet with planning
+                "12251774013",  # bad function server
+                "12251774013_2",  # bad function server
+                "12261288396",  # bad function server 2
+                "12261288396_2",  # bad function server 2
+                "12271520638",  # after fixes to function server, 50%, ok
+                "12271520638_2",  # after fixes to function server, 44%, bit worse than usual
+                "12294913264",  # reset_gpu
+                "12294913264_2",  # reset_gpu
+                "12314893905",  # 48% old sonnet
+                "12314893905_2",  # 52% new sonnet
             ]
         else:
             llms = get_llms_for_benchmark()
@@ -1116,6 +1127,12 @@ def test_pass_rate_e2e():
                 orig_response = ""
             if "fullerror:" in str(orig_response).lower():
                 orig_response = ""
+            if "# filename:" in str(orig_response).lower():
+                orig_response = ""
+            if "**Full Error:**" in str(orig_response):
+                orig_response = ""
+            if "**Partial Error:**" in str(orig_response):
+                orig_response = ""
 
             if normalize_answer(orig_response) in norm_no_answer_phrases:
                 orig_response = ""
@@ -1163,14 +1180,16 @@ def test_pass_rate_e2e():
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.copy().items():
             if do_merged:
                 # COMPARE TWO LLMs
-                if llm == "12201656855_2":
-                    llm_bad = "12216782343_2"
-                    llm_bad2 = "12195595794_2"
+                llm_good = "12201656855_2"
+                llm_bad1 = "12294913264_2"
+                llm_bad2 = "12271520638_2"
+
+                if llm == llm_good:
                     orig_response_good = metadata_str_dict_by_name[(name, llm)][
                         "metadata_dict"
                     ]["response"]
-                    if (name, llm_bad) in metadata_str_dict_by_name:
-                        orig_response_bad = metadata_str_dict_by_name[(name, llm_bad)][
+                    if (name, llm_bad1) in metadata_str_dict_by_name:
+                        orig_response_bad = metadata_str_dict_by_name[(name, llm_bad1)][
                             "metadata_dict"
                         ]["response"]
                     else:
@@ -1198,6 +1217,9 @@ def test_pass_rate_e2e():
                         and not good_answer_bad
                         and not good_answer_bad2
                     ):
+                        orig_response_good = orig_response_good.replace("\n", "")[0:15]
+                        orig_response_bad = orig_response_bad.replace("\n", "")[0:15]
+                        orig_response_bad2 = orig_response_bad2.replace("\n", "")[0:15]
                         print(
                             f"\nname:{name} (exp: {expected_now[0][0]}) good_answer_good: {good_answer_good} ({orig_response_good}) good_answer_bad: {good_answer_bad} ({orig_response_bad}) good_answer_bad2: {good_answer_bad2} ({orig_response_bad2})",
                             file=sys.stdout,
@@ -1223,6 +1245,21 @@ def test_pass_rate_e2e():
                         for x in norm_no_answer_phrases
                         if len(x) >= 3
                     ):
+                        response_reference = ""
+
+                    if response_reference == "infinity":
+                        response_reference = ""
+                    if "i apologize" in str(response_reference).lower():
+                        response_reference = ""
+                    if "<turn_title>" in str(response_reference).lower():
+                        response_reference = ""
+                    if "fullerror:" in str(response_reference).lower():
+                        response_reference = ""
+                    if "# filename:" in str(response_reference).lower():
+                        response_reference = ""
+                    if "**Full Error:**" in str(response_reference):
+                        response_reference = ""
+                    if "**Partial Error:**" in str(response_reference):
                         response_reference = ""
                 else:
                     response_reference = ""
