@@ -151,7 +151,7 @@ def get_gaia_specific_prompt():
 
 * First respond to the user's query however required.
 * Then once you have your final answer, you must put your final answer in the <constrained_output> XML tags.
-* Your constrained output should be a number OR as few words as possible OR a comma separated list of numbers and/or strings.
+* Your constrained output should be a number OR a string with as few words as possible OR a comma separated list of numbers and/or strings.
 * If you are asked for a number (e.g. what number ...), then your constrained output MUST only contain numerical digits without words, commas, units, dollar sign ($), or a percent sign (%) UNLESS specifically part of the user's actual query.
   - E.g. if a dollar amount, do not respond with "89706.00 USD" just respond with "89706.00"
 * If you are asked for a string, the constrained output shouldn't use articles (e.g. a, the) and must avoid abbreviations (e.g. for cities, states, etc.) and must write the digits in plain text.
@@ -159,9 +159,11 @@ def get_gaia_specific_prompt():
   - However, if doing translation, anagrams, or decoding messages, preserve all words, letters, and punctuation (including ending periods).
   - If the string comes from a document given, use the same exact spelling (e.g. document refers to string Hotels and that is the answer, then don't shorten to Hotel, use what document uses)
   - If the string comes from a website, use the same exact spelling (e.g. website text or image refers to "citations", then don't convert to "citation count", just leave as original).
-* If you are asked for a comma separated list, the constrained output should apply the above rules depending of whether the element to be put in the list is a number or a string.  Any list must not include outer brackets and any list must not have quotes around each item.
+  - For any string, avoid use of commas because that would be interpreted as a list.  E.g., for an answer that is to give month and year, avoid comma between month and year (e.g. give "January 2022" but not "January, 2022").
+* If you are asked for a comma separated list, the constrained output should apply the above rules depending of whether the element to be put in the list is a number or a string.  Any list must not include outer brackets and any list must not have quotes around each item.  Lists should not be numbered or contain new lines.
   - If the list would include strings from document, website, image, or transcription, then use the exact spelling and exact relevant phrasing from the source (e.g. if ingredients are given, you must not remove key relevant details like 'freshly squeezed' or 'ripe' or 'pure' etc. unless those descriptions do not exist or you are explicitly asked to shorten).
 * Be very careful with instructions regarding rounding and the way to express the output.
+* Be very careful with scale of numerical values, e.g. if the user asks "how many thousand hours" and the number of hours is 17000 then the answer should be "17" not "17000".
 * Be very careful with quantities like percentages, because percentage is unitless and so both terms must be compatible units or have no units, so you must carefully identify type (unit) of quantity for each term in the percentage (e.g. dollar per dollar is ok, but count per dollar as a percentage would be a major error).
 * If you have low confidence and were unable to give a good response inside the constrained_output XML tags, then fill the <constrained_output> XML tags with no characters (e.g. don't put unknown or unavailable etc., and don't put 0 just because you failed to find relevant material).
 * You must *never* assume that the actual user query is in error or they may be misremembering details.  You must always assume that the user query is correct and that you must find the correct answer based on the user query.
@@ -489,11 +491,13 @@ def test_pdf_questions_e2e(
                             "use_agent": True,
                             "agent_accuracy": "maximum",
                             "client_metadata": str(name + "_" + llm + "_" + question),
+                            "max_time": 3600,
+                            "agent_total_timeout": 3000,
                         },
                         rag_config={
                             "rag_type": "llm_only",
                         },
-                        timeout=3600,
+                        timeout=4000,
                     )
 
                     # Collect and save metadata for report generation
@@ -796,6 +800,609 @@ def create_failure_report_from_metadata(
     f.write("***")
 
 
+from collections import defaultdict
+from typing import List, Dict, Tuple, Any, Optional
+import pandas as pd
+from collections import Counter
+
+
+def normalize_response(response: str) -> str:
+    """Normalize a response string following existing normalization logic."""
+    if response == "infinity":
+        return ""
+    if "i apologize" in str(response).lower():
+        return ""
+    if "<turn_title>" in str(response).lower():
+        return ""
+    if "fullerror:" in str(response).lower():
+        return ""
+    if "# filename:" in str(response).lower():
+        return ""
+    if "**Full Error:**" in str(response):
+        return ""
+    if "**Partial Error:**" in str(response):
+        return ""
+    if "# filename" in response:
+        return ""
+    if "Thank you for the reminder".lower() in response.lower():
+        return ""
+
+    bad_str = "\n![image]"
+    if isinstance(response, str) and bad_str in response:
+        index_bad = response.index(bad_str)
+        response = response[:index_bad]
+
+    return response
+
+
+def get_response_mode(responses: List[str]) -> Optional[str]:
+    """Get the most common valid response from a list of responses."""
+    # Filter out empty responses
+    valid_responses = [r for r in responses if r]
+    if not valid_responses:
+        return None
+
+    # Get mode of responses
+    response_counts = Counter(valid_responses)
+    mode = response_counts.most_common(1)[0][0]
+    return mode
+
+
+def compute_llm_mode_agreement(
+    metadata_dict: Dict[str, Any]
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Compute agreement with mode for each LLM across all tasks.
+
+    Args:
+        metadata_dict: Dictionary mapping (task_name, llm) to metadata
+
+    Returns:
+        Dictionary mapping LLM names to their agreement statistics
+    """
+    # Group responses by task and collect all tasks and LLMs
+    task_responses = defaultdict(dict)
+    llm_set = set()
+    task_set = set()
+
+    # First pass: collect all responses, tasks, and LLMs
+    for (task_name, llm), data in metadata_dict.items():
+        if llm in ["MODE_LLM", "PASS_ANY"]:
+            continue
+
+        task_set.add(task_name)
+        llm_set.add(llm)
+
+        response = normalize_response(data["metadata_dict"]["response"])
+        task_responses[task_name][llm] = response
+
+    # Calculate agreement scores
+    llm_agreements = {llm: {"matches": 0, "total": len(task_set)} for llm in llm_set}
+
+    # Second pass: compare each LLM's response to the mode
+    for task_name in task_set:
+        # Get all responses for this task
+        task_llm_responses = task_responses[task_name]
+        valid_responses = [r for r in task_llm_responses.values() if r]
+
+        if not valid_responses:
+            continue
+
+        mode_response = get_response_mode(valid_responses)
+        if not mode_response:
+            continue
+
+        # Check agreement for each LLM
+        for llm in llm_set:
+            # If LLM has no response for this task, it's counted as a disagreement
+            # (matches count stays the same, total is already set)
+            if llm in task_llm_responses and task_llm_responses[llm] == mode_response:
+                llm_agreements[llm]["matches"] += 1
+
+    # Calculate agreement percentages
+    llm_scores = {}
+    for llm, stats in llm_agreements.items():
+        if stats["total"] > 0:
+            agreement_rate = (stats["matches"] / stats["total"]) * 100
+            llm_scores[llm] = {
+                "agreement_rate": agreement_rate,
+                "matches": stats["matches"],
+                "total": stats["total"],
+            }
+
+    return llm_scores
+
+
+def select_reference_llm(metadata_dict: Dict[str, Any]) -> str:
+    """
+    Select the best reference LLM based on mode agreement across all tasks.
+
+    Args:
+        metadata_dict: Dictionary mapping (task_name, llm) to metadata
+
+    Returns:
+        Name of the LLM with highest mode agreement
+    """
+    llm_scores = compute_llm_mode_agreement(metadata_dict)
+
+    # Sort LLMs by agreement rate and then by total number of tasks
+    sorted_llms = sorted(
+        llm_scores.items(),
+        key=lambda x: (x[1]["agreement_rate"], x[1]["total"]),
+        reverse=True,
+    )
+
+    if not sorted_llms:
+        raise ValueError("No valid LLMs found for reference selection")
+
+    best_llm = sorted_llms[0][0]
+    return best_llm
+
+
+def get_reference_llm(metadata_str_dict: Dict[Tuple[str, str], Dict[str, Any]]) -> str:
+    """
+    Wrapper function to get reference LLM from metadata dictionary.
+
+    Args:
+        metadata_str_dict: Dictionary from test containing metadata for all LLMs and tasks
+
+    Returns:
+        Name of the best reference LLM
+    """
+    reference_llm = select_reference_llm(metadata_str_dict)
+    return reference_llm
+
+
+no_answer_phrases = [
+    "Unknown",
+    "Inconclusive",
+    "Cannot be determined",
+    "I don't know",
+    "Not sure",
+    "No information available",
+    "Unable to provide an answer",
+    "Insufficient data",
+    "Unclear",
+    "No definitive answer",
+    "Lack of evidence",
+    "Not applicable",
+    "No relevant information found",
+    "Indeterminate",
+    "Cannot confirm",
+    "Outside my scope of knowledge",
+    "Ambiguous",
+    "No conclusion can be drawn",
+    "The answer is uncertain",
+    "No answer provided",
+    "Unable to determine",
+    "NA",
+    "Not available",
+    "Unable to access",
+    "Unable to determine source title or translation",
+    "Unable to find source title",
+    "unable to find",
+    "Information Unavailable",
+    "Information not found",
+    "Reported as a violation",
+    "None",
+    "insufficient information",
+    "insufficient verified data",
+    "unavailable",
+    "No Compound Found",
+]
+
+
+def create_difficulty_ranked_responses(
+    metadata_str_dict_by_name: Dict[Tuple[str, str], Dict[str, Any]],
+    llms: List[str],
+    output_file: str = "response_analysis.md",
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Create DataFrames with difficulty rankings and difference analysis.
+    Applies normalizations in correct order and compares normalized versions.
+    """
+    # Initialize data structures
+    task_responses = defaultdict(int)
+    task_response_lists = {}
+    task_expected_answers = {}
+    task_correct_counts = {}
+    task_levels = {}  # New dictionary to store levels
+
+    from mux_py.tests.gaia_scorer import question_scorer, normalize_answer
+
+    def make_hashable(response):
+        """Convert response to hashable type"""
+        if isinstance(response, list):
+            return tuple(response)
+        return response
+
+    def process_response(response: str) -> str:
+        """Apply all normalizations in correct order"""
+        # Step 1: Basic text cleaning
+        response = normalize_response(response)
+
+        # Step 2: Normalize for comparison
+        normalized_response = normalize_answer(response)
+
+        # Step 3: Check against normalized no_answer_phrases
+        normalized_no_answers = [normalize_answer(x) for x in no_answer_phrases]
+        if make_hashable(normalized_response) in normalized_no_answers:
+            return ""
+        # For partial matches, need to convert to string to use 'in'
+        if any(
+            str(normalize_answer(x)) in str(normalized_response)
+            for x in no_answer_phrases
+            if len(x) >= 3
+        ):
+            return ""
+
+        # Step 4: Return normalized hashable version
+        return make_hashable(normalized_response)
+
+    # Collect responses for each task
+    tasks = set(name for (name, llm) in metadata_str_dict_by_name.keys())
+    for task in tasks:
+        raw_responses = []
+        normalized_responses = []
+
+        # Get expected answer and level
+        for llm in llms:
+            if (task, llm) in metadata_str_dict_by_name:
+                metadata_dict = metadata_str_dict_by_name[(task, llm)]["metadata_dict"]
+                expected_answer = metadata_dict["expected_answer"][0][0]
+                # Store level
+                task_levels[task] = metadata_dict.get("level", "Unknown")
+                # Normalize expected answer for comparison
+                task_expected_answers[task] = make_hashable(
+                    normalize_answer(expected_answer)
+                )
+                break
+
+        for llm in llms:
+            if llm not in ["MODE_LLM", "PASS_ANY"]:
+                if (task, llm) in metadata_str_dict_by_name:
+                    response = metadata_str_dict_by_name[(task, llm)]["metadata_dict"][
+                        "response"
+                    ]
+                    raw_responses.append(response)  # Store original for display
+                    normalized_responses.append(
+                        process_response(response)
+                    )  # Store normalized for comparison
+                else:
+                    raw_responses.append("")
+                    normalized_responses.append("")
+
+        # Store both raw and normalized responses
+        task_response_lists[task] = raw_responses
+
+        # Count unique responses using normalized versions
+        unique_responses = set(normalized_responses)  # Now using hashable versions
+        task_responses[task] = len(unique_responses)
+
+        # Count correct responses using normalized versions
+        expected = task_expected_answers.get(task, "")
+        task_correct_counts[task] = sum(
+            1 for r in normalized_responses if r and r == expected
+        )
+
+    # Assign ranks based on normalized unique counts
+    ranks = {}
+    for task, responses in task_response_lists.items():
+        normalized_responses = [process_response(r) for r in responses]
+        if all(r == "" for r in normalized_responses):
+            ranks[task] = 0  # All empty responses
+        else:
+            non_empty_responses = [r for r in normalized_responses if r != ""]
+            if not non_empty_responses:
+                ranks[task] = 0
+            else:
+                # Higher rank means more agreement (fewer unique values)
+                unique_count = len(set(non_empty_responses))
+                empty_count = len(normalized_responses) - len(non_empty_responses)
+                valid_llms = [
+                    llm for llm in llms if llm not in ["MODE_LLM", "PASS_ANY"]
+                ]
+                max_possible_rank = len(valid_llms)
+                ranks[task] = max_possible_rank - (unique_count + empty_count - 1)
+                ranks[task] = max(1, ranks[task])
+
+    import numpy as np
+
+    def calculate_signal_score(responses, max_rank):
+        """Score based on maximal variance, treating each empty string as unique."""
+        # Replace empty strings with np.nan to ensure they are treated as unique
+        processed_responses = [np.nan if r == "" else r for r in responses]
+
+        # Create a set to count unique responses, treating np.nan as unique each time
+        unique_responses_count = sum(
+            1
+            for i, r in enumerate(processed_responses)
+            if all(
+                r is not np.nan and r != other
+                for j, other in enumerate(processed_responses)
+                if i != j
+            )
+            or r is np.nan
+        )
+
+        # Diversity ratio: Fraction of responses that are unique
+        diversity_ratio = unique_responses_count / len(responses)
+
+        # Scale the score
+        score = diversity_ratio * max_rank * 10
+
+        return round(score)
+
+    # Calculate max_rank based on number of valid LLMs
+    valid_llms = [llm for llm in llms if llm not in ["MODE_LLM", "PASS_ANY"]]
+    max_rank = len(valid_llms)
+
+    # Calculate signal scores for each task
+    signal_scores = {}
+    for task, responses in task_response_lists.items():
+        normalized_responses = [process_response(r) for r in responses]
+        signal_scores[task] = round(
+            calculate_signal_score(normalized_responses, max_rank)
+        )
+
+    df = pd.DataFrame(
+        {
+            "name": list(task_response_lists.keys()),
+            "level": [task_levels[task] for task in task_response_lists.keys()],
+            "difficulty_rank": [ranks[task] for task in task_response_lists.keys()],
+            "signal_score": [
+                signal_scores[task] for task in task_response_lists.keys()
+            ],
+            "correct_count": [
+                task_correct_counts[task] for task in task_response_lists.keys()
+            ],
+            "rank_minus_correct": [
+                ranks[task] - task_correct_counts[task]
+                for task in task_response_lists.keys()
+            ],
+            "expected_answer": [
+                task_expected_answers.get(task, "")
+                for task in task_response_lists.keys()
+            ],
+            "responses": [
+                [process_response(r) for r in task_response_lists[task]]
+                for task in task_response_lists.keys()
+            ],
+        }
+    )
+
+    # Create all sorted versions with level column
+    df_by_rank = df.sort_values("difficulty_rank", ascending=True).reset_index(
+        drop=True
+    )
+    df_by_diff = df.sort_values("rank_minus_correct", ascending=False).reset_index(
+        drop=True
+    )
+
+    # Update markdown outputs to include level column
+    with open(output_file, "w") as f:
+        f.write("# Response Analysis by Difficulty Rank\n\n")
+        f.write("Generated at: " + str(datetime.now()) + "\n\n")
+
+        f.write("## Summary Statistics\n")
+        f.write(f"- Total tasks analyzed: {len(df)}\n")
+        f.write(
+            f"- Tasks with rank 0 (all empty): {len(df[df['difficulty_rank'] == 0])}\n"
+        )
+        f.write(f"- Maximum difficulty rank: {df['difficulty_rank'].max()}\n")
+        f.write(
+            f"- Tasks with any correct answers: {len(df[df['correct_count'] > 0])}\n"
+        )
+        f.write(
+            f"- Average number of correct answers per task: {df['correct_count'].mean():.2f}\n"
+        )
+        f.write(
+            f"- Maximum rank minus correct count: {df['rank_minus_correct'].max()}\n"
+        )
+        f.write(f"- Average signal score: {df['signal_score'].mean():.2f}\n")
+        f.write(f"- Median signal score: {df['signal_score'].median():.2f}\n\n")
+
+        f.write("## Full Analysis Table (Sorted by Difficulty Rank)\n\n")
+        df_display = df_by_rank.copy()
+        df_display["responses"] = df_display["responses"].apply(lambda x: f"`{str(x)}`")
+        df_display["expected_answer"] = df_display["expected_answer"].apply(
+            lambda x: f"`{str(x)}`"
+        )
+        df_display["signal_score"] = df_display["signal_score"].apply(
+            lambda x: f"{x:.2f}"
+        )
+        f.write(df_display.to_markdown(index=False, tablefmt="pipe"))
+
+    # Create signal score version with level
+    output_file_signal = output_file.replace(".md", "_signal_score.md")
+    with open(output_file_signal, "w") as f:
+        f.write("# Response Analysis by Signal Score\n\n")
+        f.write("Generated at: " + str(datetime.now()) + "\n\n")
+
+        f.write("## Summary Statistics\n")
+        f.write(f"- Total tasks analyzed: {len(df)}\n")
+        f.write(
+            f"- Tasks with rank 0 (all empty): {len(df[df['difficulty_rank'] == 0])}\n"
+        )
+        f.write(f"- Maximum difficulty rank: {df['difficulty_rank'].max()}\n")
+        f.write(f"- Average signal score: {df['signal_score'].mean():.2f}\n")
+        f.write(f"- Median signal score: {df['signal_score'].median():.2f}\n\n")
+
+        f.write("## Full Analysis Table (Sorted by Signal Score)\n\n")
+
+        df_by_signal = df.sort_values("signal_score", ascending=False).reset_index(
+            drop=True
+        )
+        df_display = df_by_signal.copy()
+        df_display["responses"] = df_display["responses"].apply(lambda x: f"`{str(x)}`")
+        df_display["expected_answer"] = df_display["expected_answer"].apply(
+            lambda x: f"`{str(x)}`"
+        )
+        f.write(df_display.to_markdown(index=False, tablefmt="pipe"))
+
+    # Create simple version with level
+    df_simple = df_by_rank[["name", "level", "difficulty_rank", "signal_score"]].copy()
+
+    # Create grouped version
+    df_grouped = pd.DataFrame(
+        df_simple.groupby(["difficulty_rank", "level"])["name"]
+        .apply(list)
+        .reset_index()
+    )
+    df_grouped.columns = ["rank", "level", "names"]
+    df_grouped = df_grouped.sort_values(
+        ["rank", "level"], ascending=[True, True]
+    ).reset_index(drop=True)
+
+    # Create markdown output for grouped version
+    output_file_grouped = output_file.replace(".md", "_grouped.md")
+    with open(output_file_grouped, "w") as f:
+        f.write("# Response Analysis by Difficulty Rank (Grouped)\n\n")
+        f.write("Generated at: " + str(datetime.now()) + "\n\n")
+
+        # Write summary statistics
+        f.write("## Summary Statistics\n")
+        f.write(f"- Total tasks analyzed: {len(df)}\n")
+        f.write(f"- Number of different ranks: {len(df_grouped)}\n")
+        f.write(
+            f"- Tasks with rank 0 (all empty): {len(df[df['difficulty_rank'] == 0])}\n"
+        )
+        f.write(f"- Maximum difficulty rank: {df['difficulty_rank'].max()}\n\n")
+
+        # Write table showing tasks grouped by rank
+        f.write("## Grouped Analysis Table\n")
+        df_grouped_display = df_grouped.copy()
+        df_grouped_display["names"] = df_grouped_display["names"].apply(
+            lambda x: "\n".join([f"- {name}" for name in x])
+        )
+        f.write(df_grouped_display.to_markdown(index=False))
+
+    # Write simple version to markdown
+    output_file_simple = output_file.replace(".md", "_simple.md")
+    with open(output_file_simple, "w") as f:
+        f.write("# Response Analysis Simple (Difficulty Rank Only)\n\n")
+        f.write("Generated at: " + str(datetime.now()) + "\n\n")
+        f.write("## Summary Statistics\n")
+        f.write(f"- Total tasks analyzed: {len(df_simple)}\n")
+        f.write(
+            f"- Tasks with rank 0 (all empty): {len(df_simple[df_simple['difficulty_rank'] == 0])}\n"
+        )
+        f.write(f"- Maximum difficulty rank: {df_simple['difficulty_rank'].max()}\n\n")
+        f.write("## Simple Analysis Table\n\n")
+        f.write(df_simple.to_markdown(index=False, tablefmt="pipe"))
+
+    # Create difference version with level
+    output_file_diff = output_file.replace(".md", "_diff.md")
+    with open(output_file_diff, "w") as f:
+        f.write("# Response Analysis by Rank-Correct Difference\n\n")
+        f.write("Generated at: " + str(datetime.now()) + "\n\n")
+
+        f.write("## Summary Statistics\n")
+        f.write(f"- Total tasks analyzed: {len(df)}\n")
+        f.write(
+            f"- Tasks with rank 0 (all empty): {len(df[df['difficulty_rank'] == 0])}\n"
+        )
+        f.write(f"- Maximum difficulty rank: {df['difficulty_rank'].max()}\n")
+        f.write(
+            f"- Tasks with any correct answers: {len(df[df['correct_count'] > 0])}\n"
+        )
+        f.write(
+            f"- Average number of correct answers per task: {df['correct_count'].mean():.2f}\n"
+        )
+        f.write(
+            f"- Maximum rank minus correct count: {df['rank_minus_correct'].max()}\n\n"
+        )
+
+        f.write("## Full Analysis Table (Sorted by Rank-Correct Difference)\n")
+        df_display = df_by_diff.copy()
+        df_display["responses"] = df_display["responses"].apply(lambda x: f"`{str(x)}`")
+        df_display["expected_answer"] = df_display["expected_answer"].apply(
+            lambda x: f"`{str(x)}`"
+        )
+        f.write(df_display.to_markdown(index=False, tablefmt="pipe"))
+
+    return df, df_simple, df_grouped
+
+
+do_validation = os.getenv("DO_VALIDATION", "1") == "1"
+
+if do_validation:
+    llm_reference0 = "12201656855_2"  # best
+    llms0 = [
+        # "11861110789",
+        # "11869277441",
+        # "11877726721",
+        # "11944857915",
+        # "11932643059",  # fatih good one
+        # "11927530657",  # latest at the time on main
+        # "11963362874",  # worse sonnet, better others, because use weak model mode on sonnet
+        # "11998527028",  # 39% sonnet, ok, didn't check timeouts
+        # "12040085525",  # 41% sonnet, good
+        # "12070097976",  # 46% sonnet after link+transcription changes
+        # "12077316481",  # no wiki 43%
+        # "12101769834",  # 43% sonnet, good
+        # "12110242173",  # 49% reasoning first try
+        # "12134211340",  # 46% real reasoning and audio_video_transcription and other fixes
+        # "12138759559",  # 46% real reasoning .... with new sonnet
+        # "12151423910",
+        # "12151423910_2",
+        # "12156261425",  # 48% old sonnet
+        # "12156261425_2",  # 48% new sonnet
+        # "12170882886",  # 49% old sonnet
+        # "12170882886_2",  # 49% new sonnet
+        # "12175835273",  # 43% old sonnet (WHY?)
+        # "12175835273_2",  # 49% new sonnet
+        # "12195595794",  # 46% old sonnet wo/ planning
+        # "12195595794_2",  # 49% new sonnet wo/ planning
+        # "12201656855",  # 46% old sonnet w/ planning else same as above wo planning
+        # "12201656855_2",  # 55% new sonnet w/ planning else same as above wo planning
+        "12214560835",  # 49% new sonnet without planning by accident
+        "12214560835_2",  # 46% old sonnet without planning by accident
+        "12216782343",  # 49% new sonnet with planning (WHY?)
+        "12216782343_2",  # 46% old sonnet with planning
+        # "12251774013",  # bad function server
+        # "12251774013_2",  # bad function server
+        # "12261288396",  # bad function server 2
+        # "12261288396_2",  # bad function server 2
+        "12271520638",  # after fixes to function server, 50%, ok
+        "12271520638_2",  # after fixes to function server, 44%, bit worse than usual
+        "12294913264",  # reset_gpu
+        "12294913264_2",  # reset_gpu
+        "12314893905",  # 48% old sonnet
+        "12314893905_2",  # 52% new sonnet
+        "12327259036",  # 45% old sonnet with no cuda errors
+        "12327259036_2",  # 55% new sonnet with no cuda errors
+        "12335677182",  # # 50% old sonnet 2nd to last final validation run
+        "12335677182_2",  # 55% new sonnet 2nd to last final validation run
+        "12341495681",  # 41% wtf
+        "12341495681_2",  # 50% but still
+        "12352861675",  # 50% old sonnet
+        "12352861675_2",  # 50% new sonnet
+    ]
+else:
+    llm_reference0 = "12368206112_2"
+    llms0 = [
+        "12368206112",
+        "12368206112_2",
+        "12390495519",
+        "12390495519_2",
+        "12404594028",
+        "12404594028_2",
+        "12407436532",
+        "12407436532_2",
+        "12417344648_2",  # new sonnet, but 51% due to rate limit issues
+        "12417347450_2",  # new sonnet 56%
+        "12422032419",  # final accidental double
+        "12422032419_2",  # final accidental double
+        "12428272275_2",  # final1
+        "12432823399_2",  # final2
+        "1111_2",  # guess local
+        "12439534033_2",  # guess remote1
+        "12439532788_2",  # guess remote2
+        "12439535203_2",  # guess remote3
+    ]
+
+
 @pytest.mark.xfail(raises=FileNotFoundError, strict=False)
 def test_pass_rate_e2e():
     do_debug = True
@@ -805,140 +1412,27 @@ def test_pass_rate_e2e():
 
     test_suite = bs_data.find("testsuite")
     hostname = test_suite["hostname"]
-    # avoid to get all direct children of that tag
-    # (other tags, text nodes, and even whitespaces)
     test_list = test_suite.find_all("testcase")
-    print(test_list)
 
     if os.getenv("RUN_GAIA"):
         do_debug = False  # annoying when fails
         from mux_py.tests.gaia_scorer import question_scorer, normalize_answer
 
-        no_answer_phrases = [
-            "Unknown",
-            "Inconclusive",
-            "Cannot be determined",
-            "I don't know",
-            "Not sure",
-            "No information available",
-            "Unable to provide an answer",
-            "Insufficient data",
-            "Unclear",
-            "No definitive answer",
-            "Lack of evidence",
-            "Not applicable",
-            "No relevant information found",
-            "Indeterminate",
-            "Cannot confirm",
-            "Outside my scope of knowledge",
-            "Ambiguous",
-            "No conclusion can be drawn",
-            "The answer is uncertain",
-            "No answer provided",
-            "Unable to determine",
-            "NA",
-            "Not available",
-            "Unable to access",
-            "Unable to determine source title or translation",
-            "Unable to find source title",
-            "unable to find",
-            "Information Unavailable",
-            "Information not found",
-            "Reported as a violation",
-            "None",
-            "insufficient information",
-            "insufficient verified data",
-            "unavailable",
-            "No Compound Found",
-        ]
         norm_no_answer_phrases = [normalize_answer(x) for x in no_answer_phrases]
 
-        # cd ~/Downloads/all_main_gaia
-        # Run bash ~/h2ogpte/scripts/gaia_artifacts_download.sh
-        # Run bash ~/h2ogpte/scripts/gaia_artifacts_download_1.sh 11861110789 (for new gaia run) for specific new runs if just few new runs needed to avoid redoing entire download)
-        # Run test_merge_many_runs
-        # then set do_merged = True
-        # Then run this test
         do_validation = os.getenv("DO_VALIDATION", "1") == "1"
         do_merged = os.getenv("DO_MERGED", "0") == "1"
         if do_merged:
-            llm_reference = "12201656855_2"  # best
-            # llm_reference = "11986512287"  # bad
-            # llms = [
-            #     "11568839878",
-            #     "11588463470",
-            #     "11607498444",
-            #     "11625669152",
-            #     "11640765003",
-            #     "11649329718",
-            #     "11659472213",
-            #     "11679119205",
-            #     "11698710518",
-            #     "11737590601",
-            #     "11754230597",
-            #     "11763065795",
-            #     "11784555244",
-            #     "11861110789",
-            #     "11867920275",
-            #     "11869277441",
-            #     "11877726721",
-            #     "11944857915",
-            #     "11927530657",
-            # ]
-            llms = [
-                # "11861110789",
-                # "11869277441",
-                # "11877726721",
-                # "11944857915",
-                # "11932643059",  # fatih good one
-                # "11927530657",  # latest at the time on main
-                # "11963362874",  # worse sonnet, better others, because use weak model mode on sonnet
-                # "11998527028",  # 39% sonnet, ok, didn't check timeouts
-                # "12040085525",  # 41% sonnet, good
-                "12070097976",  # 46% sonnet after link+transcription changes
-                # "12077316481",  # no wiki 43%
-                # "12101769834",  # 43% sonnet, good
-                "12110242173",  # 49% reasoning first try
-                "12134211340",  # 46% real reasoning and audio_video_transcription and other fixes
-                "12138759559",  # 46% real reasoning .... with new sonnet
-                # "12151423910",
-                # "12151423910_2",
-                "12156261425",  # 48% old sonnet
-                "12156261425_2",  # 48% new sonnet
-                "12170882886",  # 49% old sonnet
-                "12170882886_2",  # 49% new sonnet
-                "12175835273",  # 43% old sonnet (WHY?)
-                "12175835273_2",  # 49% new sonnet
-                "12195595794",  # 46% old sonnet wo/ planning
-                "12195595794_2",  # 49% new sonnet wo/ planning
-                "12201656855",  # 46% old sonnet w/ planning else same as above wo planning
-                "12201656855_2",  # 55% new sonnet w/ planning else same as above wo planning
-                "12214560835",  # 49% new sonnet without planning by accident
-                "12214560835_2",  # 46% old sonnet without planning by accident
-                "12216782343",  # 49% new sonnet with planning (WHY?)
-                "12216782343_2",  # 46% old sonnet with planning
-                "12251774013",  # bad function server
-                "12251774013_2",  # bad function server
-                "12261288396",  # bad function server 2
-                "12261288396_2",  # bad function server 2
-                "12271520638",  # after fixes to function server, 50%, ok
-                "12271520638_2",  # after fixes to function server, 44%, bit worse than usual
-                "12294913264",  # reset_gpu
-                "12294913264_2",  # reset_gpu
-                "12314893905",  # 48% old sonnet
-                "12314893905_2",  # 52% new sonnet
-            ]
+            llms = llms0  # Use the list of LLMs defined at module level
         else:
             llms = get_llms_for_benchmark()
-            llm_reference = "claude-3-5-sonnet-20240620"
+            llm_reference = "claude-3-5-sonnet-20241022"
             if llm_reference not in llms:
                 llm_reference = llms[0]
     else:
         llms = client.get_llm_names()
-
-    llms = sorted(
-        llms, key=lambda x: len(x), reverse=True
-    )  # sort by length, longest one first, to avoid partial matches below
+        llms = sorted(llms, key=lambda x: len(x), reverse=True)
+        print(test_list)
 
     benchmark_data = get_data_for_benchmark()
 
@@ -951,22 +1445,38 @@ def test_pass_rate_e2e():
     fail_msgs = defaultdict(list)
     fail_questions = defaultdict(int)
 
+    import pandas as pd
+
+    normalize_by_only_annotated = (
+        os.getenv("GAIA_NORMALIZE_BY_ONLY_ANNOTATED", "1") == "1"
+    )
+    if os.getenv("RUN_GAIA"):
+        # use test if test set
+        if do_validation:
+            df_csv = pd.read_csv("parse/tests/gaia_validation_df.csv")
+        else:
+            df_csv = pd.read_csv("parse/tests/gaia_test_df.csv")
+        expecteds_dict = {k: v for k, v in zip(df_csv["name"], df_csv["expecteds"])}
+
     metadata_str_dict = {}
     metadata_str_dict_by_name = {}
+
+    # First pass: collect all metadata
     for test in test_list:
         test_name = test.get("name")
         if not test_name:
             print(f"Warning: Test case without 'name' attribute: {test}")
-            continue  # Skip if no test name found
+            continue
         if "test_mlebench" in test_name:
             print(f"Skipping unrelated test: {test}")
             continue
 
         llm = None
         for _llm in llms:
-            if _llm in test_name:
+            if _llm + "-" in test_name:
                 llm = _llm
                 break
+        assert llm is not None
 
         dataset = None
         url = None
@@ -974,16 +1484,19 @@ def test_pass_rate_e2e():
             if test_row[0] + "-" in test_name:
                 dataset = test_row[0]
                 url = test_row[1]
-        assert dataset, f"must find dataset in test: {test_name}"
+        assert dataset, f"must find dataset {dataset} in test: {test_name}"
 
         times[llm] += float(test["time"])
-
         failure = test.find("failure")
 
         if os.getenv("RUN_GAIA"):
             metadata_str = read_metadata(llm=llm, task_id=dataset)
             if metadata_str is not None:
                 metadata_dict = json.loads(metadata_str)
+                metadata_dict["expected_answer"] = ast.literal_eval(
+                    expecteds_dict[dataset]
+                )
+                metadata_str = json.dumps(metadata_dict)
                 metadata_str_dict[(test_name, llm)] = dict(
                     metadata_str=metadata_str,
                     metadata_dict=metadata_dict,
@@ -1000,8 +1513,29 @@ def test_pass_rate_e2e():
                 agent_response_times[llm].append(
                     float(metadata_dict.get("agent_response_time", 0))
                 )
+
         if failure is None:
-            passes[llm] += 1
+            if os.getenv("RUN_GAIA") and not do_validation:
+                expected_answer = metadata_dict["expected_answer"][0][0]
+                actual_answer = metadata_dict["response"]
+                good_answer = question_scorer(actual_answer, expected_answer)
+                if not good_answer:
+                    # count by annotated questions
+                    if (
+                        expected_answer == "impossible_1108476_qwerty"
+                        and normalize_by_only_annotated
+                    ):
+                        metadata_str_dict_by_name.pop((dataset, llm))
+                        continue
+                    else:
+                        metadata_str_dict[(test_name, llm)]["failure"] = "Wrong answer"
+                    # fail_questions["question"] += 1
+                    fails[llm] += 1
+                    # fail_msgs[llm].append("Wrong answer")
+                else:
+                    passes[llm] += 1
+            else:
+                passes[llm] += 1
         else:
             q, msg = parse_failure_message(failure=failure, dataset=dataset, url=url)
             if os.getenv("RUN_GAIA"):
@@ -1011,7 +1545,23 @@ def test_pass_rate_e2e():
             fails[llm] += 1
             fail_msgs[llm].append(msg)
 
-    import pandas as pd
+    metadata_str_dict_by_name = {
+        k: v
+        for llm in llms
+        for k, v in metadata_str_dict_by_name.items()
+        if k[1] == llm
+    }
+
+    # Now determine reference LLM if needed
+    if os.getenv("RUN_GAIA") and do_merged:
+        llm_reference = get_reference_llm(metadata_str_dict_by_name)
+        print(
+            f"Selected reference LLM {llm_reference} based on mode agreement vs. original llm_reference {llm_reference0}"
+        )
+
+        df, df_simple, df_grouped = create_difficulty_ranked_responses(
+            metadata_str_dict_by_name, llms
+        )
 
     if os.getenv("NO_SERVER", "0") == "0":
         usage_cost_table = client.get_llm_usage_24h_by_llm()
@@ -1119,21 +1669,7 @@ def test_pass_rate_e2e():
                 index_bad = orig_response.index(bad_str)
                 print("cleaned %s" % orig_response)
                 orig_response = orig_response[:index_bad]
-            if orig_response == "infinity":
-                orig_response = ""
-            if "i apologize" in str(orig_response).lower():
-                orig_response = ""
-            if "<turn_title>" in str(orig_response).lower():
-                orig_response = ""
-            if "fullerror:" in str(orig_response).lower():
-                orig_response = ""
-            if "# filename:" in str(orig_response).lower():
-                orig_response = ""
-            if "**Full Error:**" in str(orig_response):
-                orig_response = ""
-            if "**Partial Error:**" in str(orig_response):
-                orig_response = ""
-
+            orig_response = normalize_response(orig_response)
             if normalize_answer(orig_response) in norm_no_answer_phrases:
                 orig_response = ""
 
@@ -1180,9 +1716,17 @@ def test_pass_rate_e2e():
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.copy().items():
             if do_merged:
                 # COMPARE TWO LLMs
-                llm_good = "12201656855_2"
-                llm_bad1 = "12294913264_2"
-                llm_bad2 = "12271520638_2"
+                # llm_good = "12335677182_2"
+                # llm_bad1 = "12341495681"
+                # llm_bad2 = "12341495681_2"
+
+                # llm_good = "12335677182"
+                # llm_bad1 = "12341495681"
+                # llm_bad2 = "12341495681"
+
+                llm_good = "12407436532_2"
+                llm_bad1 = "12417344648_2"
+                llm_bad2 = "12417344648_2"
 
                 if llm == llm_good:
                     orig_response_good = metadata_str_dict_by_name[(name, llm)][
@@ -1247,20 +1791,7 @@ def test_pass_rate_e2e():
                     ):
                         response_reference = ""
 
-                    if response_reference == "infinity":
-                        response_reference = ""
-                    if "i apologize" in str(response_reference).lower():
-                        response_reference = ""
-                    if "<turn_title>" in str(response_reference).lower():
-                        response_reference = ""
-                    if "fullerror:" in str(response_reference).lower():
-                        response_reference = ""
-                    if "# filename:" in str(response_reference).lower():
-                        response_reference = ""
-                    if "**Full Error:**" in str(response_reference):
-                        response_reference = ""
-                    if "**Partial Error:**" in str(response_reference):
-                        response_reference = ""
+                    response_reference = normalize_response(response_reference)
                 else:
                     response_reference = ""
 
@@ -1330,9 +1861,15 @@ def test_pass_rate_e2e():
                     not good_answer
                     and not metadata_str_dict_by_name[(name, "PASS_ANY")]["failure"]
                 ):
-                    print("MODE BAD but one good: %s" % name)
+                    print(
+                        "MODE BAD but one good: %s expected: %s: list: %s"
+                        % (name, expected[0][0], response_list)
+                    )
                 if not good_answer and any_good_answer:
-                    print("2 MODE BAD but one good: %s" % name)
+                    print(
+                        "2 MODE BAD but one good: %s expected: %s: list: %s"
+                        % (name, expected[0][0], response_list)
+                    )
 
                 checking_one = False
                 if checking_one:
@@ -1344,30 +1881,47 @@ def test_pass_rate_e2e():
                 )
         llms.append("MODE_LLM")
         if submission:
+            if not do_validation:
+                # add dummy problem back in
+                submission.append(dict(task_id="0-0-0-0-0", model_answer="?"))
+                submission_labels.append(
+                    dict(
+                        task_id="0-0-0-0-0",
+                        model_answer="?",
+                        good_answer=True,
+                        good_answer0=True,
+                        expected="?",
+                    )
+                )
+
             if do_debug:
                 if do_validation:
                     assert len(submission) == 165
                 else:
-                    assert len(submission) == 300
-            with open("submission.jsonl", "wt") as f:
+                    assert len(submission) == 301
+            type_str = "validation" if do_validation else "test"
+            with open(f"submission_{type_str}.jsonl", "wt", encoding="utf-8") as f:
                 for s in submission:
-                    f.write(json.dumps(s) + "\n")
-            with open("submission_labels.jsonl", "wt") as f:
+                    f.write(json.dumps(s, ensure_ascii=False) + "\n")
+            with open(
+                f"submission_labels_{type_str}.jsonl", "wt", encoding="utf-8"
+            ) as f:
                 for s in submission_labels:
-                    f.write(json.dumps(s) + "\n")
-
-        # use test if test set
-        if do_validation:
-            df = pd.read_csv("parse/tests/gaia_validation_df.csv")
-        else:
-            df = pd.read_csv("parse/tests/gaia_test_df.csv")
+                    f.write(json.dumps(s, ensure_ascii=False) + "\n")
 
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.items():
             metadata_dict = metadata_str_dict1["metadata_dict"]
             failure = metadata_str_dict1["failure"]
             level_meta = metadata_dict.get("level")
 
-            df2 = df[df["name"] == name]
+            if llm not in ["PASS_ANY", "MODE_LLM"]:
+                expected_answer = metadata_dict["expected_answer"][0][0]
+                actual_answer = metadata_dict["response"]
+                good_answer = question_scorer(actual_answer, expected_answer)
+                if failure is None and not good_answer:
+                    failure = "failure"
+
+            df2 = df_csv[df_csv["name"] == name]
             assert df2.shape[0] == 1
             level = str(df2["level"].values[0])
             if level_meta:
@@ -1522,6 +2076,7 @@ def group_and_sort_metadata(metadata_str_dict):
     ]
 
 
+@pytest.mark.skipif(os.getenv("DO_MERGED", "0") == "0", reason="Only merge if should")
 def test_merge_many_runs():
     import os
     import tarfile
@@ -1536,7 +2091,12 @@ def test_merge_many_runs():
         "claude-3-5-sonnet-20240620",
         "claude-3-5-sonnet-20241022",
     ]  # Only include data for this LLM
-    artifacts_dir = "/home/jon/Downloads/all_main_gaia/artifacts"
+    do_validation = os.getenv("DO_VALIDATION", "1") == "1"
+
+    if do_validation:
+        artifacts_dir = "/home/jon/Downloads/all_main_gaia/artifacts"
+    else:
+        artifacts_dir = "/home/jon/Downloads/all_main_gaia/test_artifacts"
     base_output_dir = os.path.join("./", "agent_results", "gaia")
     merged_test_client_path = os.path.join("./", "test_client.xml")
 
