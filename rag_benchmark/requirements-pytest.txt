@@ -20,5 +20,6 @@ jsonschema==4.21.1
 genson==1.2.2
 jsondiff==2.0.0
 pymupdf==1.24.5
+pillow==10.3.0
 filelock
 datatable

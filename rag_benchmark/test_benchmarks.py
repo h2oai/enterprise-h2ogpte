@@ -8,8 +8,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime
-from statistics import mode
-from typing import Union, Any, Tuple, List
+from typing import Union, Any
 from bs4 import BeautifulSoup
 from agents_test_utils import (
     get_agents_chat_history,
@@ -22,9 +21,12 @@ from agents_test_utils import (
 import pytest
 import html
 import pandas as pd
-from collections import defaultdict
 
-from conftest import e2e_data, gaia_data, set_num_openblas_threads
+from conftest import (
+    e2e_data,
+    gaia_data,
+    set_num_openblas_threads,
+)
 
 set_num_openblas_threads(1)
 
@@ -122,6 +124,10 @@ def get_llms_for_benchmark():
                     "gpt-35-turbo",
                 ]
             )
+        ]
+    if os.getenv("DROP_REASONING", "1") == "1":
+        all_llms = [
+            x for x in all_llms if x not in client.get_reasoning_capable_llm_names()
         ]
     if os.getenv("TEST_ALL"):
         all_llms = [
@@ -486,6 +492,7 @@ def test_pdf_questions_e2e(
                     start_time = time.time()
                     reply = session.query(
                         message=prompt,
+                        system_prompt="",
                         llm=llm,
                         llm_args={
                             "use_agent": True,
@@ -559,9 +566,12 @@ def test_pdf_questions_e2e(
                     os.makedirs(test_dir)
 
                     # check got the file
-                    agent_files, agent_values, agent_files_base_names = get_agent_files(
-                        client=client, reply=reply
-                    )
+                    (
+                        agent_files,
+                        agent_files_old,
+                        agent_values,
+                        agent_files_base_names,
+                    ) = get_agent_files(client=client, reply=reply)
                     print(agent_values, file=sys.stderr)
 
                     # check agents talked to each other
@@ -808,7 +818,7 @@ from collections import Counter
 
 def normalize_response(response: str) -> str:
     """Normalize a response string following existing normalization logic."""
-    if response == "infinity":
+    if response == "infinity" or response == float("inf"):
         return ""
     if "i apologize" in str(response).lower():
         return ""
@@ -1327,57 +1337,17 @@ def create_difficulty_ranked_responses(
 do_validation = os.getenv("DO_VALIDATION", "1") == "1"
 
 if do_validation:
-    llm_reference0 = "12201656855_2"  # best
+    llm_reference0 = "12869794391"  # best
     llms0 = [
-        # "11861110789",
-        # "11869277441",
-        # "11877726721",
-        # "11944857915",
-        # "11932643059",  # fatih good one
-        # "11927530657",  # latest at the time on main
-        # "11963362874",  # worse sonnet, better others, because use weak model mode on sonnet
-        # "11998527028",  # 39% sonnet, ok, didn't check timeouts
-        # "12040085525",  # 41% sonnet, good
-        # "12070097976",  # 46% sonnet after link+transcription changes
-        # "12077316481",  # no wiki 43%
-        # "12101769834",  # 43% sonnet, good
-        # "12110242173",  # 49% reasoning first try
-        # "12134211340",  # 46% real reasoning and audio_video_transcription and other fixes
-        # "12138759559",  # 46% real reasoning .... with new sonnet
-        # "12151423910",
-        # "12151423910_2",
-        # "12156261425",  # 48% old sonnet
-        # "12156261425_2",  # 48% new sonnet
-        # "12170882886",  # 49% old sonnet
-        # "12170882886_2",  # 49% new sonnet
-        # "12175835273",  # 43% old sonnet (WHY?)
-        # "12175835273_2",  # 49% new sonnet
-        # "12195595794",  # 46% old sonnet wo/ planning
-        # "12195595794_2",  # 49% new sonnet wo/ planning
-        # "12201656855",  # 46% old sonnet w/ planning else same as above wo planning
-        # "12201656855_2",  # 55% new sonnet w/ planning else same as above wo planning
-        "12214560835",  # 49% new sonnet without planning by accident
-        "12214560835_2",  # 46% old sonnet without planning by accident
-        "12216782343",  # 49% new sonnet with planning (WHY?)
-        "12216782343_2",  # 46% old sonnet with planning
-        # "12251774013",  # bad function server
-        # "12251774013_2",  # bad function server
-        # "12261288396",  # bad function server 2
-        # "12261288396_2",  # bad function server 2
-        "12271520638",  # after fixes to function server, 50%, ok
-        "12271520638_2",  # after fixes to function server, 44%, bit worse than usual
-        "12294913264",  # reset_gpu
-        "12294913264_2",  # reset_gpu
-        "12314893905",  # 48% old sonnet
-        "12314893905_2",  # 52% new sonnet
-        "12327259036",  # 45% old sonnet with no cuda errors
-        "12327259036_2",  # 55% new sonnet with no cuda errors
-        "12335677182",  # # 50% old sonnet 2nd to last final validation run
-        "12335677182_2",  # 55% new sonnet 2nd to last final validation run
-        "12341495681",  # 41% wtf
-        "12341495681_2",  # 50% but still
-        "12352861675",  # 50% old sonnet
-        "12352861675_2",  # 50% new sonnet
+        "12869794391",
+        "12899183440",
+        "12903724742-together",
+        "12903724742_2",
+        "12923960370",  # 3%
+        "12918905563",
+        "12933112239",
+        "12946856499",
+        "12959943769",  # 22% still failures even with 5 parallel and more protection, trying empty respnose protection
     ]
 else:
     llm_reference0 = "12368206112_2"
@@ -1431,6 +1401,9 @@ def test_pass_rate_e2e():
                 llm_reference = llms[0]
     else:
         llms = client.get_llm_names()
+        # exclude reasoning LLMs from RAG benchmark, too expensive
+        reasoning_llms = client.get_reasoning_capable_llm_names()
+        llms = [x for x in llms if x not in reasoning_llms]
         llms = sorted(llms, key=lambda x: len(x), reverse=True)
         print(test_list)
 
@@ -1476,7 +1449,9 @@ def test_pass_rate_e2e():
             if _llm + "-" in test_name:
                 llm = _llm
                 break
-        assert llm is not None
+        assert llm is not None, test_name
+        # if llm is None:
+        #    continue
 
         dataset = None
         url = None
@@ -1619,6 +1594,23 @@ def test_pass_rate_e2e():
     results_frame.index = range(1, results_frame.shape[0] + 1)
     results_frame.index.name = "RANK"
 
+    total_pass = results_frame["PASS"].sum()
+    total_fail = results_frame["FAIL"].sum()
+    accuracy = round((total_pass / (total_pass + total_fail)) * 100, 2)
+    row_count = len(results_frame)
+    average_pass = round(results_frame["PASS"].mean(), 2)
+    average_fail = round(results_frame["FAIL"].mean(), 2)
+    average_accuracy = round(results_frame["ACCURACY [%]"].mean(), 2)
+    results_summary = pd.DataFrame(
+        {
+            "Metric": ["Total", "Average"],
+            "Model Count": [row_count, "N/A"],
+            "PASS": [total_pass, average_pass],
+            "FAIL": [total_fail, average_fail],
+            "ACCURACY (%)": [accuracy, average_accuracy],
+        }
+    )
+
     questions_frame = (
         pd.DataFrame(
             data={
@@ -1713,6 +1705,7 @@ def test_pass_rate_e2e():
                 ].append(unfiltered_response)
         submission = []
         submission_labels = []
+        good_answer_count = 0
         for (name, llm), metadata_str_dict1 in metadata_str_dict_by_name.copy().items():
             if do_merged:
                 # COMPARE TWO LLMs
@@ -1724,9 +1717,9 @@ def test_pass_rate_e2e():
                 # llm_bad1 = "12341495681"
                 # llm_bad2 = "12341495681"
 
-                llm_good = "12407436532_2"
-                llm_bad1 = "12417344648_2"
-                llm_bad2 = "12417344648_2"
+                llm_good = "12869794391"
+                llm_bad1 = "12899183440"
+                llm_bad2 = "12903724742_2"
 
                 if llm == llm_good:
                     orig_response_good = metadata_str_dict_by_name[(name, llm)][
@@ -1781,6 +1774,7 @@ def test_pass_rate_e2e():
                     response_reference = metadata_str_dict_by_name[
                         (name, llm_reference)
                     ]["metadata_dict"]["response"]
+                    response_reference = normalize_response(response_reference)
 
                     if normalize_answer(response_reference) in norm_no_answer_phrases:
                         response_reference = ""
@@ -1827,7 +1821,15 @@ def test_pass_rate_e2e():
                 good_answer0 = question_scorer(orig_response, expected[0][0])
                 good_answer = question_scorer(response, expected[0][0])
                 any_good_answer = any(
-                    [question_scorer(str(x), expected[0][0]) for x in response_list]
+                    [
+                        question_scorer(
+                            str(x)
+                            if not isinstance(x, tuple)
+                            else ", ".join(map(str, x)),
+                            expected[0][0],
+                        )
+                        for x in response_list
+                    ]
                 )
                 submission.append(dict(task_id=name, model_answer=response))
                 submission_labels.append(
@@ -1870,15 +1872,27 @@ def test_pass_rate_e2e():
                         "2 MODE BAD but one good: %s expected: %s: list: %s"
                         % (name, expected[0][0], response_list)
                     )
+                if good_answer and not any_good_answer:
+                    print(
+                        "3 MODE GOOD but none good: %s expected: %s: list: %s"
+                        % (name, expected[0][0], response_list)
+                    )
 
                 checking_one = False
                 if checking_one:
                     if good_answer0 != good_answer:
                         print(name)
-
+                good_answer_count += 1 if good_answer else 0
+                pass_any_failure = metadata_str_dict_by_name[(name, "PASS_ANY")][
+                    "failure"
+                ]
+                print(
+                    f"GOODMODELLM: {1 if good_answer else 0} {pass_any_failure} {response}, {expected[0][0]}"
+                )
                 metadata_str_dict_by_name[(name, "MODE_LLM")]["failure"] = (
                     None if good_answer else "failure"
                 )
+        print(f"good_answer_count: {good_answer_count}")
         llms.append("MODE_LLM")
         if submission:
             if not do_validation:
@@ -2003,6 +2017,9 @@ def test_pass_rate_e2e():
         f.write("\n\n")
         f.write(f"Total cost: {results_frame['COST'].sum()} USD")
         f.write("\n\n")
+        f.write(f"\n## Results Summary:\n")
+        f.write(results_summary.to_markdown())
+        f.write("\n\n")
         f.write(f"\n## Results:\n")
         f.write(f"```\n")
         f.write(results_frame.to_markdown())
@@ -2088,10 +2105,22 @@ def test_merge_many_runs():
 
     # Input parameters
     target_llm_names = [
-        "claude-3-5-sonnet-20240620",
-        "claude-3-5-sonnet-20241022",
+        # "claude-3-5-sonnet-20240620",
+        # "claude-3-5-sonnet-20241022",
+        "deepseek-ai/DeepSeek-V3",
+        "deepseek-ai/DeepSeek-V3-together",
     ]  # Only include data for this LLM
     do_validation = os.getenv("DO_VALIDATION", "1") == "1"
+
+    # cd ~/Downloads/all_main_gaia
+    # bash ~/h2ogpte/scripts/gaia_artifacts_download_1.sh 12110242173
+
+    # cd ~/Downloads/all_main_gaia
+    # bash ~/h2ogpte/scripts/gaia_artifacts_download.sh
+
+    # cd ~/h2ogpte/
+    # NO_SERVER=1 RUN_GAIA=1 pytest -s -v mux_py/tests/test_benchmarks::test_merge_many_runs
+    # TEST_ALL=1 RUN_GAIA=1 DO_MERGED=1 NO_SERVER=1 pytest -s -v mux_py/tests/test_benchmarks::test_pass_rate_e2e &> pass1.log
 
     if do_validation:
         artifacts_dir = "/home/jon/Downloads/all_main_gaia/artifacts"
