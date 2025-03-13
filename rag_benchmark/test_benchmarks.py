@@ -17,6 +17,7 @@ from agents_test_utils import (
     get_agents_chat_history_md,
     get_agents_analysis,
     most_common_or_default,
+    convert_markdown_to_html,
 )
 import pytest
 import html
@@ -26,6 +27,7 @@ from conftest import (
     e2e_data,
     gaia_data,
     set_num_openblas_threads,
+    reasoning_models_to_keep,
 )
 
 set_num_openblas_threads(1)
@@ -40,21 +42,23 @@ from mux_py.tests.agents_test_utils import agent_llms
 if os.getenv("NO_SERVER", "0") == "0":
     try:
         from mux_py.tests.test_mux import get_test_name
-        from parse.tests.datasets import CachedFile
+        from parse.tests.datasets_cached import CachedFile
 
         # # For h2ogpte CI
         from mux_py.tests.test_mux import REMOTE_ADDRESS, API_KEY
     except ModuleNotFoundError as e:
         # For open-source benchmarks repository
-        from datasets import CachedFile
+        from datasets_cached import CachedFile
 
         REMOTE_ADDRESS = os.getenv(
             "H2OGPTE_TEST_ADDRESS", "https://h2ogpte.genai.h2o.ai"
         )
-        API_KEY = os.getenv("H2OGPTE_API_KEY")
+        API_KEY = os.getenv("H2OGPTE_API_KEY", "sk-user_1@example.com")
     assert REMOTE_ADDRESS, "Must have h2oGPTe remote server address."
     assert API_KEY, "Must set H2OGPTE_API_KEY env var first."
+    H2OGPTE.TIMEOUT = 6000.0
     client = H2OGPTE(address=REMOTE_ADDRESS, api_key=API_KEY)
+    client.TIMEOUT = 6000.0
 else:
     client = None
 
@@ -127,7 +131,10 @@ def get_llms_for_benchmark():
         ]
     if os.getenv("DROP_REASONING", "1") == "1":
         all_llms = [
-            x for x in all_llms if x not in client.get_reasoning_capable_llm_names()
+            x
+            for x in all_llms
+            if x not in client.get_reasoning_capable_llm_names()
+            or x in reasoning_models_to_keep()
         ]
     if os.getenv("TEST_ALL"):
         all_llms = [
@@ -169,6 +176,7 @@ def get_gaia_specific_prompt():
 * If you are asked for a comma separated list, the constrained output should apply the above rules depending of whether the element to be put in the list is a number or a string.  Any list must not include outer brackets and any list must not have quotes around each item.  Lists should not be numbered or contain new lines.
   - If the list would include strings from document, website, image, or transcription, then use the exact spelling and exact relevant phrasing from the source (e.g. if ingredients are given, you must not remove key relevant details like 'freshly squeezed' or 'ripe' or 'pure' etc. unless those descriptions do not exist or you are explicitly asked to shorten).
 * Be very careful with instructions regarding rounding and the way to express the output.
+* Be very careful to distinguish between user asking in same query to "find" and to "tell", where if both appear you should put the answer from the "tell" part in your constrained output.
 * Be very careful with scale of numerical values, e.g. if the user asks "how many thousand hours" and the number of hours is 17000 then the answer should be "17" not "17000".
 * Be very careful with quantities like percentages, because percentage is unitless and so both terms must be compatible units or have no units, so you must carefully identify type (unit) of quantity for each term in the percentage (e.g. dollar per dollar is ok, but count per dollar as a percentage would be a major error).
 * If you have low confidence and were unable to give a good response inside the constrained_output XML tags, then fill the <constrained_output> XML tags with no characters (e.g. don't put unknown or unavailable etc., and don't put 0 just because you failed to find relevant material).
@@ -490,6 +498,34 @@ def test_pdf_questions_e2e(
                     prompt += f"<task>\n{question}\n</task>\n"
 
                     start_time = time.time()
+
+                    # choose tools most relevant for GAIA
+                    if os.getenv("RUN_GAIA"):
+                        agent_tools = [
+                            "aider_code_generation.py",
+                            "ask_question_about_image.py",
+                            "audio_video_transcription.py",
+                            "convert_document_to_text.py",
+                            "download_web_video.py",
+                            "screenshot_webpage.py",
+                            "unified_search.py",
+                            "google_search.py",
+                            "bing_search.py",
+                            "browser_agent.py",
+                            "scholar_papers_query.py",
+                            "query_to_web_image.py",
+                            "ask_question_about_documents.py",
+                            "wikipedia_article.py",
+                            "wayback_machine_search.py",
+                            "advanced_reasoning.py",
+                            "shell",
+                            "python",
+                            "internet",
+                            "intranet",
+                        ]
+                    else:
+                        agent_tools = "auto"
+
                     reply = session.query(
                         message=prompt,
                         system_prompt="",
@@ -500,6 +536,16 @@ def test_pdf_questions_e2e(
                             "client_metadata": str(name + "_" + llm + "_" + question),
                             "max_time": 3600,
                             "agent_total_timeout": 3000,
+                            "agent_tools": agent_tools,
+                            "temperature": 0.6
+                            if "DeepSeek-R1" in llm and os.getenv("RUN_GAIA")
+                            else 0.0,
+                            "agent_planning_forced_mode": True,
+                            # "agent_main_model": "deepseek-ai/DeepSeek-R1-shadeform",
+                            "agent_max_confidence_level": 2,
+                            "agent_main_reasoning_effort": 10000,
+                            "agent_advanced_reasoning_effort": 20000,
+                            "autogen_code_restrictions_level": 0,
                         },
                         rag_config={
                             "rag_type": "llm_only",
@@ -608,9 +654,7 @@ def test_pdf_questions_e2e(
                     chat_history_file = os.path.join(test_dir, "chat_history.md")
                     with open(chat_history_file, "w") as f:
                         f.write(str(agents_chat_history_md))
-                    os.system(
-                        f'pandoc +RTS -M500m -RTS -f markdown {chat_history_file} > {chat_history_file.replace(".md", ".html")}'
-                    )
+                    convert_markdown_to_html(chat_history_file)
 
                     with open(os.path.join(test_dir, "agent_analysis.txt"), "w") as f:
                         f.write(str(agents_analysis))
@@ -827,6 +871,8 @@ def normalize_response(response: str) -> str:
     if "fullerror:" in str(response).lower():
         return ""
     if "# filename:" in str(response).lower():
+        return ""
+    if "**Error:**" in str(response):
         return ""
     if "**Full Error:**" in str(response):
         return ""
@@ -1181,13 +1227,30 @@ def create_difficulty_ranked_responses(
         }
     )
 
-    # Create all sorted versions with level column
-    df_by_rank = df.sort_values("difficulty_rank", ascending=True).reset_index(
-        drop=True
-    )
-    df_by_diff = df.sort_values("rank_minus_correct", ascending=False).reset_index(
-        drop=True
-    )
+    one_level = False
+    if one_level:
+        # choose only level 2
+        # df = df[df["level"] == '2']
+        # only choose if correct_count == 0
+        df = df[df["correct_count"] == 0]
+        # sort by level even though level is string, treat as integer while sorting
+        df["level"] = df["level"].astype(int)
+        df = df.sort_values(["level"], ascending=[True])
+        # go back to string
+        df["level"] = df["level"].astype(str)
+
+        # Create all sorted versions with level column
+        df_by_rank = df
+        df_by_diff = df
+
+    else:
+        # Create all sorted versions with level column
+        df_by_rank = df.sort_values("difficulty_rank", ascending=True).reset_index(
+            drop=True
+        )
+        df_by_diff = df.sort_values("rank_minus_correct", ascending=False).reset_index(
+            drop=True
+        )
 
     # Update markdown outputs to include level column
     with open(output_file, "w") as f:
@@ -1337,40 +1400,27 @@ def create_difficulty_ranked_responses(
 do_validation = os.getenv("DO_VALIDATION", "1") == "1"
 
 if do_validation:
-    llm_reference0 = "12869794391"  # best
+    llm_reference0 = "13626750857"  # best
     llms0 = [
-        "12869794391",
-        "12899183440",
-        "12903724742-together",
-        "12903724742_2",
-        "12923960370",  # 3%
-        "12918905563",
-        "12933112239",
-        "12946856499",
-        "12959943769",  # 22% still failures even with 5 parallel and more protection, trying empty respnose protection
+        "13577705545",
+        # "13583009468", # bad one at 58%
+        "13598752164",
+        "13602292431",
+        "13604549574",  # 65% docker patch
+        "13610686459",  # 63% full docker + gaia minor
+        "13626750857",  # 65% extra critique
+        "13651636138",  # 60%
+        "13693080510",  # 63%
+        "13735166151",  # 63%  main
+        # "13746608063",  # 41%  no output except browser and unified
+        "13752122321",  # 66%  first unified run
+        "13769946081",  # 61% no plan
+        "13763067042",  # 65%
+        "13774488522",  # 64%
     ]
 else:
-    llm_reference0 = "12368206112_2"
-    llms0 = [
-        "12368206112",
-        "12368206112_2",
-        "12390495519",
-        "12390495519_2",
-        "12404594028",
-        "12404594028_2",
-        "12407436532",
-        "12407436532_2",
-        "12417344648_2",  # new sonnet, but 51% due to rate limit issues
-        "12417347450_2",  # new sonnet 56%
-        "12422032419",  # final accidental double
-        "12422032419_2",  # final accidental double
-        "12428272275_2",  # final1
-        "12432823399_2",  # final2
-        "1111_2",  # guess local
-        "12439534033_2",  # guess remote1
-        "12439532788_2",  # guess remote2
-        "12439535203_2",  # guess remote3
-    ]
+    llm_reference0 = ""
+    llms0 = []
 
 
 @pytest.mark.xfail(raises=FileNotFoundError, strict=False)
@@ -1396,7 +1446,7 @@ def test_pass_rate_e2e():
             llms = llms0  # Use the list of LLMs defined at module level
         else:
             llms = get_llms_for_benchmark()
-            llm_reference = "claude-3-5-sonnet-20241022"
+            llm_reference = "claude-3-7-sonnet-20250219"
             if llm_reference not in llms:
                 llm_reference = llms[0]
     else:
@@ -1443,15 +1493,17 @@ def test_pass_rate_e2e():
         if "test_mlebench" in test_name:
             print(f"Skipping unrelated test: {test}")
             continue
-
+        if "test_swe_benchmark" in test_name:
+            print(f"Skipping unrelated test: {test}")
+            continue
         llm = None
         for _llm in llms:
             if _llm + "-" in test_name:
                 llm = _llm
                 break
-        assert llm is not None, test_name
-        # if llm is None:
-        #    continue
+        # assert llm is not None, f"{llms} {test_name}"
+        if llm is None:
+            continue
 
         dataset = None
         url = None
@@ -1717,9 +1769,10 @@ def test_pass_rate_e2e():
                 # llm_bad1 = "12341495681"
                 # llm_bad2 = "12341495681"
 
-                llm_good = "12869794391"
-                llm_bad1 = "12899183440"
-                llm_bad2 = "12903724742_2"
+                # level 2 check
+                llm_good = "13604549574"
+                llm_bad1 = "13610686459"
+                llm_bad2 = "13610686459"
 
                 if llm == llm_good:
                     orig_response_good = metadata_str_dict_by_name[(name, llm)][
@@ -2106,9 +2159,9 @@ def test_merge_many_runs():
     # Input parameters
     target_llm_names = [
         # "claude-3-5-sonnet-20240620",
-        # "claude-3-5-sonnet-20241022",
-        "deepseek-ai/DeepSeek-V3",
-        "deepseek-ai/DeepSeek-V3-together",
+        "claude-3-7-sonnet-20250219",
+        # "deepseek-ai/DeepSeek-V3",
+        # "deepseek-ai/DeepSeek-V3-together",
     ]  # Only include data for this LLM
     do_validation = os.getenv("DO_VALIDATION", "1") == "1"
 

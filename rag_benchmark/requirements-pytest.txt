@@ -23,3 +23,14 @@ pymupdf==1.24.5
 pillow==10.3.0
 filelock
 datatable
+
+
+# SWE Benchmark testing
+swebench==3.0.4
+
+# MLE Bench
+py7zr>=0.21
+kaggle>=1.6
+appdirs>=1.4.4
+diskcache>=5.6.3
+tenacity>=8.5.0
