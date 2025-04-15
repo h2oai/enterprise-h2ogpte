@@ -24,7 +24,6 @@ pillow==10.3.0
 filelock
 datatable
 
-
 # SWE Benchmark testing
 swebench==3.0.4
 
@@ -34,3 +33,10 @@ kaggle>=1.6
 appdirs>=1.4.4
 diskcache>=5.6.3
 tenacity>=8.5.0
+
+# Redis for config overrides
+redis[hiredis]==5.0.0
+
+# PG client for config overrides
+psycopg[pool]==3.1.10
+psycopg_binary==3.1.18

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime
 from typing import Union, Any
 from bs4 import BeautifulSoup
@@ -143,6 +144,7 @@ def get_llms_for_benchmark():
         return all_llms
     return [
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        # "h2oai/h2ovl-mississippi-2b",
         # "gemini-1.5-pro-latest",
         # "claude-3-haiku-20240307",
         # "gpt-4-1106-preview",
@@ -617,6 +619,8 @@ def test_pdf_questions_e2e(
                         agent_files_old,
                         agent_values,
                         agent_files_base_names,
+                        agent_files_pdf,
+                        agent_files_pdf_old,
                     ) = get_agent_files(client=client, reply=reply)
                     print(agent_values, file=sys.stderr)
 
@@ -632,7 +636,7 @@ def test_pdf_questions_e2e(
                     for document in agent_files:
                         for document_id1, document_name1 in document.items():
                             if os.path.exists(os.path.join(test_dir, document_name1)):
-                                document_name1 = "alt_" + document_name1
+                                document_name1 = str(uuid.uuid4()) + document_name1
                             try:
                                 client.download_document(
                                     test_dir, document_name1, document_id1
@@ -705,6 +709,9 @@ def test_pdf_questions_e2e(
                             refs += c.text + "\n\n"
             error_msg = ""
             for expected in expecteds:
+                assert all(
+                    isinstance(e, str) for e in expected
+                ), "expected values must be strings"
                 if use_agent and os.getenv("RUN_GAIA"):
                     do_validation = os.getenv("DO_VALIDATION", "1") == "1"
                     if do_validation:
@@ -860,8 +867,63 @@ import pandas as pd
 from collections import Counter
 
 
+def cleanup_bad_constrained_output(text):
+    """
+    Clean up badly parsed constrained output where the closing tag is missing.
+    If the text contains an opening <constrained_output> tag without a matching
+    closing tag, extract everything after the opening tag.
+
+    Args:
+        text (str): The text to clean up
+
+    Returns:
+        str: The cleaned output or None if no issues detected
+    """
+    # Check if we have an opening tag without a closing tag
+    if "<constrained_output>" in text and "</constrained_output>" not in text:
+        # Extract everything after the opening tag
+        start_idx = text.find("<constrained_output>") + len("<constrained_output>")
+        extracted_content = text[start_idx:].strip()
+        return extracted_content
+
+    # If it's a well-formed tag or no tag is present, return None
+    # to indicate no cleanup was needed
+    return None
+
+
+def extract_constrained_output(text):
+    """
+    Extract the constrained output from text, handling both well-formed
+    and badly parsed cases.
+
+    Args:
+        text (str): The text containing constrained output
+
+    Returns:
+        str: The extracted constrained output or None if not found
+    """
+    # First try the regular extraction for well-formed tags
+    if "<constrained_output>" in text and "</constrained_output>" in text:
+        pattern = r"<constrained_output>(.*?)</constrained_output>"
+        matches = re.findall(pattern, text, re.DOTALL)
+        if matches:
+            return matches[0].strip()
+
+    # If regular extraction fails or tags are malformed, try cleanup
+    cleanup_result = cleanup_bad_constrained_output(text)
+    if cleanup_result:
+        return cleanup_result
+
+    # If nothing found
+    return None
+
+
 def normalize_response(response: str) -> str:
     """Normalize a response string following existing normalization logic."""
+    response_test = extract_constrained_output(response)
+    if response_test:
+        response = response_test
+
     if response == "infinity" or response == float("inf"):
         return ""
     if "i apologize" in str(response).lower():
@@ -1416,11 +1478,60 @@ if do_validation:
         "13752122321",  # 66%  first unified run
         "13769946081",  # 61% no plan
         "13763067042",  # 65%
-        "13774488522",  # 64%
+        # "13774488522",  # 64%
     ]
 else:
     llm_reference0 = ""
-    llms0 = []
+    llms0 = [
+        "13784368905_3",
+        "13784386908_3",
+        "13818728191_3",
+        "13818725909_3",
+        "13828053343_3",
+        "13829421314_3",
+        # "13839811292_3",
+        "13839813266_3",
+        "13850124407_3",
+        "13868254451_3",
+        "13875246295_3",
+        "13879833780_3",
+        "13886198446_3",
+        "1111",  # guess
+        "12439534033",  # guess
+        "12439535203",  # guess
+        "12439532788",  # guess
+        "1111_2",  # guess
+        "12439534033_2",  # guess
+        "12439535203_2",  # guess
+        "12439532788_2",  # guess
+    ]
+
+
+def extract_innermost_xml_tags(full_text, tags=["name", "page"]):
+    results_dict = {k: None for k in tags}
+    for tag in tags:
+        # First find all opening and closing tag positions
+        open_tags = [m.start() for m in re.finditer(rf"<{tag}>", full_text)]
+        close_tags = [m.start() for m in re.finditer(rf"</{tag}>", full_text)]
+
+        # Match innermost tags by finding pairs with no tags between them
+        innermost_matches = []
+        for open_pos in open_tags:
+            # Find the closest closing tag after this opening tag
+            next_closes = [pos for pos in close_tags if pos > open_pos]
+            if next_closes:
+                close_pos = min(next_closes)
+                # Check if there are no opening tags between this pair
+                if not any(open_pos < pos < close_pos for pos in open_tags):
+                    # Extract content between tags
+                    content_start = open_pos + len(f"<{tag}>")
+                    content_end = close_pos
+                    innermost_matches.append(full_text[content_start:content_end])
+
+        if innermost_matches:
+            results_dict[tag] = innermost_matches[0]  # Take the first innermost match
+
+    return results_dict
 
 
 @pytest.mark.xfail(raises=FileNotFoundError, strict=False)
@@ -1770,9 +1881,9 @@ def test_pass_rate_e2e():
                 # llm_bad2 = "12341495681"
 
                 # level 2 check
-                llm_good = "13604549574"
-                llm_bad1 = "13610686459"
-                llm_bad2 = "13610686459"
+                llm_good = "13850124407"
+                llm_bad1 = "13875246295"
+                llm_bad2 = "13868254451"
 
                 if llm == llm_good:
                     orig_response_good = metadata_str_dict_by_name[(name, llm)][
@@ -2024,11 +2135,10 @@ def test_pass_rate_e2e():
 
     skipped = int(test_suite.get("skipped"))
     if not os.getenv("SMOKE") and do_debug:
-        assert skipped in [
-            0,
-            1,
-            22,  # whisper OOM xfail (11 models x 2 tests)
-        ], "make sure to run `make test_client_e2e` with TEST_ALL=1"
+        assert skipped <= 2, (
+            f"too many tests skipped (should only skip agents+swe)."
+            f"make sure to run `make test_client_e2e` with TEST_ALL=1: skipped={skipped}"
+        )
     with open("results/test_client_e2e.md", "wt") as f:
         try:
             import h2ogpte_core.settings as core_settings
@@ -2158,7 +2268,8 @@ def test_merge_many_runs():
 
     # Input parameters
     target_llm_names = [
-        # "claude-3-5-sonnet-20240620",
+        "claude-3-5-sonnet-20240620",
+        "claude-3-5-sonnet-20241022",
         "claude-3-7-sonnet-20250219",
         # "deepseek-ai/DeepSeek-V3",
         # "deepseek-ai/DeepSeek-V3-together",
