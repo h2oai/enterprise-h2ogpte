@@ -127,6 +127,7 @@ def get_llms_for_benchmark():
                     "gemini-1.5-pro-latest",
                     "claude-3-sonnet",
                     "gpt-35-turbo",
+                    "gpt-4.5-preview",  # $90 per run
                 ]
             )
         ]
@@ -1480,6 +1481,8 @@ if do_validation:
         "13763067042",  # 65%
         # "13774488522",  # 64%
     ]
+    # should have _2 etc. for each as derived from merge
+    llms_pass = llms0
 else:
     llm_reference0 = ""
     llms0 = [
@@ -1505,6 +1508,8 @@ else:
         "12439535203_2",  # guess
         "12439532788_2",  # guess
     ]
+    # should have _2 etc. for each as derived from merge
+    llms_pass = llms0
 
 
 def extract_innermost_xml_tags(full_text, tags=["name", "page"]):
@@ -1554,7 +1559,7 @@ def test_pass_rate_e2e():
         do_validation = os.getenv("DO_VALIDATION", "1") == "1"
         do_merged = os.getenv("DO_MERGED", "0") == "1"
         if do_merged:
-            llms = llms0  # Use the list of LLMs defined at module level
+            llms = llms_pass  # Use the list of LLMs defined at module level
         else:
             llms = get_llms_for_benchmark()
             llm_reference = "claude-3-7-sonnet-20250219"
@@ -2342,6 +2347,9 @@ def test_merge_many_runs():
 
     llm_labels = []
     for run_dir in run_dirs:
+        if not any(x in run_dir for x in llms0):
+            continue
+
         run_id = os.path.basename(run_dir)  # Use run_id as the label
 
         for target_llm_name in target_llm_names:
