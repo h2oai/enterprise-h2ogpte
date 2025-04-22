@@ -951,7 +951,41 @@ def normalize_response(response: str) -> str:
         index_bad = response.index(bad_str)
         response = response[:index_bad]
 
+    response = unicode_to_ascii(response)
+
     return response
+
+
+import unicodedata
+import re
+
+
+def unicode_to_ascii(text):
+    # Step 1: Normalize (decomposes accents, ligatures, etc.)
+    text = unicodedata.normalize("NFKD", text)
+
+    # Step 2: Encode to ASCII bytes, ignore non-ASCII chars
+    text = text.encode("ascii", "ignore").decode("ascii")
+
+    # Step 3: Optional: replace specific fancy punctuation (if needed)
+    # You can expand this map for other symbols as needed
+    punctuation_map = {
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
+        "–": "-",
+        "—": "-",
+        "…": "...",
+        "•": "*",
+    }
+    for fancy, ascii_equiv in punctuation_map.items():
+        text = text.replace(fancy, ascii_equiv)
+
+    # Step 4: Collapse multiple spaces and trim
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
 
 
 def get_response_mode(responses: List[str]) -> Optional[str]:
