@@ -40,3 +40,6 @@ redis[hiredis]==5.0.0
 # PG client for config overrides
 psycopg[pool]==3.1.10
 psycopg_binary==3.1.18
+
+# for locust load tests
+locust==2.37.1
