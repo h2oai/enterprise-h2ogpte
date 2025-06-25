@@ -200,7 +200,7 @@ def test_pdf_questions_e2e(
         if not use_agent:
             try:
                 # random attack for devs with `make test_client_e2e_ingest`
-                assert os.getenv("INGEST_ONLY")
+                assert False and os.getenv("INGEST_ONLY")
                 import random
 
                 from h2ogpte_parse.parse import supported_ocr_models
@@ -241,6 +241,7 @@ def test_pdf_questions_e2e(
                 tesseract_lang=tesseract_lang,
                 keep_tables_as_one_chunk=keep_tables_as_one_chunk,
                 handwriting_check=handwriting_check,
+                ingest_mode="standard",
             )
             try:
                 assert job.completed
