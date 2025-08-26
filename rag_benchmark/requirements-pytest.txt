@@ -4,6 +4,7 @@ pytest-cov==4.1.0
 pytest-instafail==0.5.0
 pytest-timeout==2.2.0
 pytest-xdist==3.3.1
+pytest-retry==1.7.0
 beautifulsoup4==4.12.2
 lxml==4.9.3
 minio==7.1.16
@@ -23,6 +24,7 @@ pymupdf==1.24.5
 pillow==10.3.0
 filelock
 datatable
+openai==1.77.0
 
 # SWE Benchmark testing
 swebench==3.0.4

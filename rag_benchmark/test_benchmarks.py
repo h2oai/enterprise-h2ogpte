@@ -22,7 +22,7 @@ from conftest import (
     set_num_openblas_threads,
     reasoning_models_to_keep,
 )
-from mux_py.tests.test_benchmarks_utils import get_gaia_specific_prompt
+from mux_py.tests.test_benchmarks_utils import get_gaia_specific_prompt, normalize_text
 from mux_py.tests.test_benchmarks_client import client
 from mux_py.tests.test_benchmarks_enums import timestamp, GAIA_RESULTS_DIR
 from parse.tests.datasets_cached import CachedFile
@@ -114,6 +114,7 @@ def get_llms_for_benchmark():
         return all_llms
     return [
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        # "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF-oracle",
         # "h2oai/h2ovl-mississippi-2b",
         # "gemini-1.5-pro-latest",
         # "claude-3-haiku-20240307",
@@ -131,14 +132,33 @@ def get_data_for_benchmark():
     return e2e_data
 
 
+llms_ = get_llms_for_benchmark()
+data_ = get_data_for_benchmark()
+
+
 @pytest.mark.e2e
 @pytest.mark.clean_up_required
 @pytest.mark.parametrize(
-    "name, URL, question, expecteds, must_pass, use_agent, tools, tool_categories, level, nsteps",
-    get_data_for_benchmark(),
-    ids=lambda x: x[0] if isinstance(x, tuple) else x,
+    "llm, name, URL, question, expecteds, must_pass, use_agent, tools, tool_categories, level, nsteps",
+    [
+        pytest.param(
+            llm,
+            data[0],
+            data[1],
+            data[2],
+            data[3],
+            data[4],
+            data[5],
+            data[6],
+            data[7],
+            data[8],
+            data[9],
+            id=f"{llm}----{'-'.join(list(str(x) for x in data))}",
+        )
+        for data in data_
+        for llm in llms_
+    ],
 )
-@pytest.mark.parametrize("llm", get_llms_for_benchmark())
 def test_pdf_questions_e2e(
     name: str,
     URL: str,
@@ -334,6 +354,7 @@ def test_pdf_questions_e2e(
                         llm=llm,
                         llm_args={
                             "use_agent": True,
+                            "agent_type": "deep_research",
                             "agent_accuracy": "maximum",
                             "client_metadata": str(name + "_" + llm + "_" + question),
                             "max_time": 3600 * 2,
@@ -530,8 +551,12 @@ def test_pdf_questions_e2e(
                         # test set, nothing to do
                         missings = []
                 else:
+                    reply_content_normalized = normalize_text(reply_content)
                     missings = [
-                        e for e in expected if e.lower() not in reply_content.lower()
+                        e
+                        for e in expected
+                        if normalize_text(e).lower()
+                        not in reply_content_normalized.lower()
                     ]
                 if not missings:
                     # one complete set of expected strings is enough to pass the test
